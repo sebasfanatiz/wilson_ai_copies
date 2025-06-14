@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Wilson Generador de Copies AI</title>
+  <style>
+    @font-face {
+      font-family: 'Gilroy';
+      src: local('Gilroy Bold'), local('Gilroy-Bold');
+      font-weight: 700;
+    }
+    body {
+      font-family: 'Gilroy', sans-serif;
+      color: #FFFFFF;
+      background: #000 url("{{ url_for('static', filename='arte/fondo.webp') }}") no-repeat center center fixed;
+      background-size: cover;
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+    }
+    .container {
+      background-color: rgba(38, 25, 59, 0.8);
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+      border-radius: 8px;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .header img {
+      max-width: 200px;
+      display: block;
+      margin: 0 auto 10px;
+    }
+    h1 {
+      font-size: 2rem;
+      color: #FF3200;
+      margin: 0;
+    }
+    label {
+      color: #FFFFFF;
+      font-weight: 700;
+      display: block;
+      margin-top: 1em;
+    }
+    input[type="text"], textarea {
+      width: 100%;
+      padding: 8px;
+      margin-top: 4px;
+      box-sizing: border-box;
+      font-size: 1rem;
+      border: 2px solid #FF3200;
+      border-radius: 4px;
+      background-color: rgba(255,255,255,0.1);
+      color: #FFF;
+    }
+    input::placeholder, textarea::placeholder {
+      color: rgba(255,255,255,0.7);
+    }
+    textarea {
+      height: 120px;
+      resize: vertical;
+    }
+    button {
+      margin-top: 1.5em;
+      padding: 10px 20px;
+      font-size: 1rem;
+      font-weight: 700;
+      background-color: #FF3200;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background-color .2s ease;
+    }
+    button:hover {
+      background-color: #e62e00;
+    }
+    .loader {
+      display: none;
+      margin-top: 1em;
+      font-style: italic;
+      color: #FFFFFF;
+    }
+    .resultado {
+      background: rgba(255,255,255,0.9);
+      border-radius: 4px;
+      padding: 15px;
+      margin-top: 2em;
+      color: #26193B;
+    }
+    .resultado a {
+      color: #FF3200;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <img src="{{ url_for('static', filename='arte/logo.png') }}" alt="Fanatiz Logo">
+      <h1>Wilson Generador de Copies AI</h1>
+    </div>
+
+    <form id="copy-form" action="/procesar" method="post">
+      <label for="titulo_campaña">Título de Campaña</label>
+      <input type="text" id="titulo_campaña" name="titulo_campaña"
+             value="{{ titulo or '' }}" placeholder="Ingresa el título" required>
+
+      <label for="brief_campaña">Brief de Campaña</label>
+      <textarea id="brief_campaña" name="brief_campaña"
+                placeholder="Ingresa el brief completo" required>{{ brief or '' }}</textarea>
+
+      <button type="submit">Generar Excel</button>
+      <div class="loader" id="loader">En proceso de generación…</div>
+    </form>
+
+    {% if resultado %}
+      {% if resultado.startswith('ERROR') %}
+        <div class="resultado" style="color:red">{{ resultado }}</div>
+      {% else %}
+        <div class="resultado">
+          ✅ Excel generado: 
+          <a href="{{ url_for('descargar', filename=resultado) }}">{{ resultado }}</a>
+        </div>
+      {% endif %}
+    {% endif %}
+  </div>
+
+  <script>
+    document.getElementById('copy-form')
+      .addEventListener('submit', function() {
+        document.getElementById('loader').style.display = 'block';
+      });
+  </script>
+</body>
+</html>
