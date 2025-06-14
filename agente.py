@@ -281,11 +281,12 @@ def generar_copies(campaign_name: str, campaign_brief: str, output_filename: str
         "campaign_brief": campaign_brief,
         "extras": os.getenv("CAMPAIGN_EXTRAS","")
     }
-    base = os.getenv("BASE_PATH", r"C:\Users\96seb\OneDrive\Desktop\Python\webapp")
-    df_refs = cargar_referencias(os.path.join(base, "Mejor_Performing_Copies_Paid_Fanatiz.xlsx"))
-    df_content = cargar_contenidos(os.path.join(base, "content_by_country.xlsx"))
-    df_plans = cargar_planes(os.path.join(base, "plans_and_pricing.xlsx"))
-    df_specs = cargar_specs(os.path.join(base, "platforms_and_campaigns_specs.xlsx"))
+    # Forma correcta de obtener la ruta de la carpeta del proyecto
+    base_path = os.path.abspath(os.path.dirname(__file__))
+    df_refs = cargar_referencias(os.path.join(base_path, "Mejor_Performing_Copies_Paid_Fanatiz.xlsx"))
+    df_content = cargar_contenidos(os.path.join(base_path, "content_by_country.xlsx"))
+    df_plans = cargar_planes(os.path.join(base_path, "plans_and_pricing.xlsx"))
+    df_specs = cargar_specs(os.path.join(base_path, "platforms_and_campaigns_specs.xlsx"))
     content_info, plan_info = obtener_info_contenido(briefs_config["campaign_brief"], df_content, df_plans)
     prompt = generar_prompt_multi(briefs_config, df_refs, content_info, plan_info, df_specs)
     resp = client.chat.completions.create(
