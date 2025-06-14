@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, send_from_directory
 import os
-#import sys
-#import re
+import sys
+import re
 
 # Asegura que Python encuentre mi_agente
 #agente_path = os.path.abspath(os.path.join(__file__, '..', '..', 'mi_agente'))
