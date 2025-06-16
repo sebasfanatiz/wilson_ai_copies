@@ -245,6 +245,8 @@ def generar_excel_multi(data: dict, filename: str = "copies_final.xlsx"):
                             "Max Caracteres":limit,
                             "Check":1 if len(txt)<=limit else 0
                         })
+                print(f"Pausa de 10 segundos después de procesar el campo: {camp}/{field}")
+                time.sleep(10)
     df = pd.DataFrame(rows)
     with pd.ExcelWriter(filename, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name="Copies", index=False)
