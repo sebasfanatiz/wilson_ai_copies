@@ -1,4 +1,5 @@
 from flask import Flask, render_template, request, send_from_directory
+from datetime import datetime
 import os
 import sys
 import re
@@ -18,14 +19,33 @@ os.makedirs(SALIDAS_DIR, exist_ok=True)
 
 @app.route('/', methods=['GET'])
 def index():
-    archivos_generados = []
+    archivos_info = [] # Cambiamos el nombre para que sea más claro
     if os.path.exists(SALIDAS_DIR):
-        # Listamos los archivos y los ordenamos por fecha de modificación (los más nuevos primero)
-        archivos = [f for f in os.listdir(SALIDAS_DIR) if f.endswith('.xlsx')]
-        archivos.sort(key=lambda x: os.path.getmtime(os.path.join(SALIDAS_DIR, x)), reverse=True)
-        archivos_generados = archivos
+        archivos_nombres = [f for f in os.listdir(SALIDAS_DIR) if f.endswith('.xlsx')]
         
-    return render_template('index.html', resultado=None, archivos=archivos_generados)
+        for nombre_archivo in archivos_nombres:
+            ruta_completa = os.path.join(SALIDAS_DIR, nombre_archivo)
+            try:
+                # Obtenemos la fecha de modificación como un número (timestamp)
+                timestamp = os.path.getmtime(ruta_completa)
+                # La convertimos a un objeto de fecha y hora legible
+                fecha_hora = datetime.fromtimestamp(timestamp)
+                # Le damos un formato amigable para Argentina
+                fecha_formateada = fecha_hora.strftime("%d/%m/%Y - %H:%M:%S")
+                
+                archivos_info.append({
+                    "nombre": nombre_archivo,
+                    "fecha": fecha_formateada,
+                    "timestamp": timestamp # guardamos el original para ordenar
+                })
+            except FileNotFoundError:
+                # En el caso improbable de que el archivo se elimine mientras lo leemos
+                print(f"No se pudo encontrar el archivo: {nombre_archivo}")
+
+        # Ordenamos la lista por el timestamp (el número), del más nuevo al más viejo
+        archivos_info.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+    return render_template('index.html', resultado=None, archivos=archivos_info)
 
 @app.route('/procesar', methods=['POST'])
 def procesar():
@@ -66,6 +86,29 @@ def procesar():
         brief=brief,
         archivos=[] # Pasamos una lista vacía para que no de error al renderizar
     )
+
+@app.route('/eliminar/<path:filename>', methods=['POST'])
+def eliminar(filename):
+    # --- Medida de Seguridad ---
+    # os.path.basename se asegura de que no nos pasen rutas maliciosas como ../../app.py
+    # Solo nos quedamos con el nombre del archivo.
+    safe_filename = os.path.basename(filename)
+
+    # Construimos la ruta completa de forma segura
+    ruta_archivo = os.path.join(SALIDAS_DIR, safe_filename)
+
+    try:
+        if os.path.exists(ruta_archivo) and safe_filename.endswith('.xlsx'):
+            os.remove(ruta_archivo)
+            # Usamos 'flash' para enviar un mensaje de éxito a la página principal
+            flash(f"Archivo '{safe_filename}' eliminado correctamente.", "success")
+        else:
+            flash(f"Error: El archivo '{safe_filename}' no existe o no es válido.", "error")
+    except Exception as e:
+        flash(f"Ocurrió un error al intentar eliminar el archivo: {e}", "error")
+
+    # Redirigimos al usuario de vuelta a la página principal
+    return redirect(url_for('index'))
 
 @app.route('/salidas/<path:filename>')
 def descargar(filename):
