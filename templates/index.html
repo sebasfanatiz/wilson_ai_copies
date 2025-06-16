@@ -47,6 +47,16 @@
   </style>
 </head>
 <body>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="resultado" style="max-width: 800px; margin: 10px auto; background-color: {% if category == 'success' %}#d4edda{% else %}#f8d7da{% endif %}; color: #333;">
+          {{ message }}
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
   <div class="container">
     <div class="header">
       <img src="{{ url_for('static', filename='arte/logo.png') }}" alt="Fanatiz Logo">
@@ -73,17 +83,31 @@
       </div>
     {% endif %}
     {% if archivos %}
-      <div class="archivos">
-        <h2>Archivos Generados</h2>
-        <ul>
-          {% for archivo in archivos %}
-            <li>
-              <a href="{{ url_for('descargar', filename=archivo) }}">{{ archivo }}</a>
-            </li>
-          {% endfor %}
-        </ul>
-      </div>
-    {% endif %}
+  <div class="archivos">
+    <h2>Archivos Generados</h2>
+    <ul>
+      {% for item in archivos %}
+        <li style="display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <a href="{{ url_for('descargar', filename=item.nombre) }}">{{ item.nombre }}</a>
+            <span style="color: #888; font-size: 0.8em; margin-left: 15px;">
+              {{ item.fecha }}
+            </span>
+          </div>
+          
+          <form action="{{ url_for('eliminar', filename=item.nombre) }}" method="POST" style="margin: 0;">
+            <button type="submit" 
+                    onclick="return confirm('¿Estás seguro de que quieres eliminar este archivo? Esta acción no se puede deshacer.')"
+                    style="background-color: #dc3545; padding: 5px 10px; font-size: 0.8rem;">
+              Eliminar
+            </button>
+          </form>
+
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
     </div>
   </body>
 </html>
