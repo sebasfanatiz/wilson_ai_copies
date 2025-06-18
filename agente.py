@@ -171,8 +171,10 @@ def generar_prompt_multi(briefs: dict,
     ejemplos = []
     muestra = ref_df.sample(n=min(10, len(ref_df)), random_state=42)
     for _, row in muestra.iterrows():
+        # Usamos .get('Market', 'General') para que si la columna no existe, no dé error
+        market_info = row.get('Market', 'General')
         ejemplos.append(
-            f"- [{row['Idioma']}] {row['Platform']} {row['Tipo']} {row['Campo']}: \"{row['Texto']}\""
+            f"- [{market_info}] [{row['Idioma']}] {row['Platform']} {row['Tipo']} {row['Campo']}: \"{row['Texto']}\""
         )
     ejemplos_block = "\n".join(ejemplos)
     template = {}
@@ -192,6 +194,9 @@ def generar_prompt_multi(briefs: dict,
         ]) or "Sin planes configurados"
         info_block.append(f"- Mercado {market}: idiomas [{', '.join(content_info['languages'])}]; planes: {planes_str}")
     instrucciones = [
+        # Añadimos esta regla como la más importante de todas
+        "Regla de Oro Absoluta: Para cualquier dato específico como precios, nombres de planes, descuentos o monedas, DEBES usar única y exclusivamente la información proporcionada en la sección 'Mercados y planes disponibles'. NUNCA inventes precios ni los tomes de los ejemplos de 'best performers'. Los ejemplos son solo para definir el estilo y el tono, NO para los datos.",
+        # El resto de las instrucciones
         "Regla global: • Si un texto excede el límite máximo, reescríbelo... • Si está por debajo del 60 %, expándelo... • Procura acercarte al 95-100 %."
     ]
     for _,row in specs_df.iterrows():
@@ -284,6 +289,7 @@ def generar_copies(campaign_name: str, campaign_brief: str, output_filename: str
         "campaign_brief": campaign_brief,
         "extras": os.getenv("CAMPAIGN_EXTRAS","")
     }
+
     # Forma correcta de obtener la ruta de la carpeta del proyecto
     base_path = os.path.abspath(os.path.dirname(__file__))
     df_refs = cargar_referencias(os.path.join(base_path, "Mejor_Performing_Copies_Paid_Fanatiz.xlsx"))
