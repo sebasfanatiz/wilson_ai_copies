@@ -85,23 +85,44 @@
     {% if archivos %}
   <div class="archivos">
     <h2>Archivos Generados</h2>
-    <ul>
+    <ul style="padding-left: 0;">
       {% for item in archivos %}
-        <li style="display: flex; justify-content: space-between; align-items: center;">
-          <div>
-            <a href="{{ url_for('descargar', filename=item.nombre) }}">{{ item.nombre }}</a>
-            <span style="color: #888; font-size: 0.8em; margin-left: 15px;">
-              {{ item.fecha }}
-            </span>
-          </div>
+        <li style="display: flex; justify-content: space-between; align-items: center; background-color: rgba(0,0,0,0.2); padding: 10px; border-radius: 4px; margin-bottom: 8px;">
           
-          <form action="{{ url_for('eliminar', filename=item.nombre) }}" method="POST" style="margin: 0;">
-            <button type="submit" 
-                    onclick="return confirm('¿Estás seguro de que quieres eliminar este archivo? Esta acción no se puede deshacer.')"
-                    style="background-color: #dc3545; padding: 5px 10px; font-size: 0.8rem;">
-              Eliminar
-            </button>
-          </form>
+          <div style="flex-grow: 1;">
+            <strong style="color: #fff;">{{ item.nombre }}</strong>
+            <br>
+            <span style="color: #bbb; font-size: 0.8em;">
+              Creado: {{ item.fecha }}
+            </span>
+
+            {% if item.status == 'error' %}
+              <div style="color: #f8d7da; font-weight: bold; font-size: 0.9em; margin-top: 5px;">
+                Error: {{ item.error_msg }}
+              </div>
+            {% elif item.status == 'processing' %}
+              <div style="color: #ffeeba; font-weight: bold; font-size: 0.9em; margin-top: 5px;">
+                Estado: Procesando... por favor, recarga la página en unos momentos.
+              </div>
+            {% endif %}
+          </div>
+
+          <div style="display: flex; align-items: center;">
+            {% if item.status == 'success' %}
+              <a href="{{ url_for('descargar', filename=item.nombre) }}" 
+                 style="background-color: #28a745; color: white; padding: 5px 10px; font-size: 0.8rem; border-radius: 4px; text-decoration: none; margin-right: 10px;">
+                Descargar
+              </a>
+            {% endif %}
+            
+            <form action="{{ url_for('eliminar', filename=item.nombre) }}" method="POST" style="margin: 0;">
+              <button type="submit" 
+                      onclick="return confirm('¿Estás seguro de que quieres eliminar este registro?')"
+                      style="background-color: #dc3545; padding: 5px 10px; font-size: 0.8rem;">
+                Eliminar
+              </button>
+            </form>
+          </div>
 
         </li>
       {% endfor %}
