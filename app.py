@@ -12,6 +12,7 @@ from agente import generar_copies
 from groq import BadRequestError
 
 app = Flask(__name__)
+app.secret_key = 'fanatiz'
 
 # Directorio base y carpeta de salidas
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
