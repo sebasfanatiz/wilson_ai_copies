@@ -163,51 +163,67 @@ Textos a traducir:
             pass
     return texts
 
+# En agente.py, reemplaza toda la función generar_prompt_multi
+
 def generar_prompt_multi(briefs: dict,
                          ref_df: pd.DataFrame,
                          content_info: dict,
                          plan_info: dict,
                          specs_df: pd.DataFrame) -> str:
+    
+    # --- Parte 1: Construcción de bloques de información (sin cambios) ---
     ejemplos = []
     muestra = ref_df.sample(n=min(10, len(ref_df)), random_state=42)
     for _, row in muestra.iterrows():
+        market_info = row.get('Market', 'General')
         ejemplos.append(
-            f"- [{row['Idioma']}] {row['Platform']} {row['Tipo']} {row['Campo']}: \"{row['Texto']}\""
+            f"- [{market_info}] [{row['Idioma']}] {row['Platform']} {row['Tipo']} {row['Campo']}: \"{row['Texto']}\""
         )
     ejemplos_block = "\n".join(ejemplos)
+
     template = {}
     for market in content_info["markets"]:
         template[market] = {}
         for camp, fields in CAMPAIGNS_STRUCTURE.items():
-            template[market][camp] = {field: ([] if count>1 else "") for field,(count,_) in fields.items()}
-    info_block = [f"Contenido identificado: {content_info['content_name']}"]
-    if content_info.get("details"): info_block.append(f"Detalles: {content_info['details']}")
-    info_block.append(f"Idiomas de narración disponibles: {', '.join(content_info['languages'])}")
-    info_block.append("")
-    info_block.append("Mercados y planes disponibles:")
+            template[market][camp] = {field: ([] if count > 1 else "") for field, (count, _) in fields.items()}
+
+    # --- Parte 2: Bloque de datos de precios (con énfasis visual) ---
+    info_contenido_str = f"Contenido identificado: {content_info['content_name']}\n"
+    if content_info.get("details"):
+        info_contenido_str += f"Detalles: {content_info['details']}\n"
+    info_contenido_str += f"Idiomas de narración disponibles: {', '.join(content_info['languages'])}"
+
+    info_planes_items = []
     for market, planes in plan_info.items():
         planes_str = "; ".join([
             f"{p['plan_name']} ({p['recurring_period']}) a {p['currency_symbol']}{p['price']} {p['currency']}" + (f" con {p['marketing_discount']}% de descuento" if p['has_discount'].lower()=="si" else "")
             for p in planes
         ]) or "Sin planes configurados"
-        info_block.append(f"- Mercado {market}: idiomas [{', '.join(content_info['languages'])}]; planes: {planes_str}")
+        info_planes_items.append(f"- Mercado {market}: idiomas [{', '.join(content_info['languages'])}]; planes: {planes_str}")
+    info_planes_str = "\n".join(info_planes_items)
+
+    # --- Parte 3: Instrucciones "Blindadas" (CAMBIO CLAVE) ---
     instrucciones = [
+        "Regla de Oro Absoluta: Para cualquier dato específico como precios, nombres de planes, descuentos o monedas, DEBES usar única y exclusivamente la información de la sección <DATOS_DE_PRECIOS_OBLIGATORIOS>. NUNCA inventes precios ni los tomes de los ejemplos de 'best performers'.",
         "Regla global: • Si un texto excede el límite máximo, reescríbelo... • Si está por debajo del 60 %, expándelo... • Procura acercarte al 95-100 %."
     ]
-    for _,row in specs_df.iterrows():
+    for _, row in specs_df.iterrows():
         instrucciones.append(
             f"{row['platform']} {row['campaign']}: genera exactamente {int(row['quantity'])} {row['title']} (máx {int(row['characters'])} car.); {row['style']}; {row['details']}; objetivo: {row['objective']}."
         )
     instrucciones.append(
-        "Verificación automática: antes de responder, corrige cualquier línea que no cumpla longitud o sea redundante..."
+        "Paso Final de Autocorrección: Antes de generar el JSON final, revisa mentalmente cada uno de los copies que has creado. Comprueba que CUALQUIER mención a un precio coincida EXACTAMENTE con los datos de la sección <DATOS_DE_PRECIOS_OBLIGATORIOS>. Si encuentras un error, es tu obligación corregirlo antes de responder. Tu tarea es entregar un resultado 100% preciso según los datos proporcionados."
     )
+
+    # --- Parte 4: Construcción del Prompt Final (con énfasis visual) ---
     prompt = (
         f"Eres un generador de copies experto para campañas pagas...\n\n"
         f"Empresa: {briefs['company']}\nContexto: {briefs['company_context']}\nPropuesta de valor: {briefs['value_proposition']}\n"
         f"Nombre de campaña: {briefs['campaign_name']}\nBrief: {briefs['campaign_brief']}\n"
         f"Comentarios adicionales: {briefs['extras']}\n\n"
-        f"{'\n'.join(info_block)}\n\n"
-        f"Ejemplos de best performers:\n{ejemplos_block}\n\n"
+        f"{info_contenido_str}\n\n"
+        f"<DATOS_DE_PRECIOS_OBLIGATORIOS>\n{info_planes_str}\n</DATOS_DE_PRECIOS_OBLIGATORIOS>\n\n"
+        f"Ejemplos de best performers (solo para estilo y tono, ignorar datos específicos):\n{ejemplos_block}\n\n"
         f"Instrucciones:\n- {'\n- '.join(instrucciones)}\n\n"
         f"Devuelve SÓLO un JSON con esta plantilla:\n{json.dumps(template, ensure_ascii=False, indent=2)}"
     )
