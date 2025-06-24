@@ -205,7 +205,7 @@ def generar_prompt_multi(briefs: dict,
     # --- Parte 3: Instrucciones "Blindadas" (CAMBIO CLAVE) ---
     instrucciones = [
         "Regla de Oro Absoluta: Para cualquier dato específico como precios, nombres de planes, descuentos o monedas, DEBES usar única y exclusivamente la información de la sección <DATOS_DE_PRECIOS_OBLIGATORIOS>. NUNCA inventes precios ni los tomes de los ejemplos de 'best performers'.",
-        "Regla global: • Si un texto excede el límite máximo, reescríbelo... • Si está por debajo del 60 %, expándelo... • Procura acercarte al 95-100 %."
+        "Regla global: • Si un texto excede el límite máximo, reescríbelo... • Si está por debajo del 60 %, expándelo... • Procura acercarte lo más posible al limite de caracteres, utiliza metáforas, acude a la emoción si necesitas usar como relleno."
     ]
     for _, row in specs_df.iterrows():
         instrucciones.append(
