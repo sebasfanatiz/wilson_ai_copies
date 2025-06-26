@@ -165,13 +165,15 @@ Textos a traducir:
 
 # En agente.py, reemplaza la función completa
 
+# En agente.py, reemplaza ÚNICAMENTE esta función
+
 def generar_prompt_multi(briefs: dict,
                          ref_df: pd.DataFrame,
                          content_info: dict,
                          plan_info: dict,
                          specs_df: pd.DataFrame) -> str:
     
-    # 1. Construir ejemplos con contexto de mercado (Solución 1)
+    # 1. Construir ejemplos (con el contexto de mercado que ya habías añadido)
     ejemplos = []
     muestra = ref_df.sample(n=min(10, len(ref_df)), random_state=42)
     for _, row in muestra.iterrows():
@@ -186,7 +188,8 @@ def generar_prompt_multi(briefs: dict,
     for market in content_info["markets"]:
         template[market] = {}
         for camp, fields in CAMPAIGNS_STRUCTURE.items():
-            template[market][camp] = {field: ([] if count > 1 else "") for field, (count, _) in fields.items()}
+            # Aquí le decimos cuántos items generar para cada campo
+            template[market][camp] = {field: ["" for _ in range(count)] if count > 1 else "" for field, (count, _) in fields.items()}
 
     # 3. Construir bloque de información factual (sin cambios)
     info_block = [f"Contenido identificado: {content_info['content_name']}"]
@@ -201,36 +204,47 @@ def generar_prompt_multi(briefs: dict,
         ]) or "Sin planes configurados"
         info_block.append(f"- Mercado {market}: {planes_str}")
 
-    # 4. Construir bloque de instrucciones claras y no conflictivas (Solución 3 - CAMBIO CLAVE)
-    instrucciones_generales = [
-        "Regla de Oro: Para CUALQUIER dato como precios, monedas o descuentos, DEBES usar exclusivamente la información de la sección 'Mercados y planes disponibles'. Es tu única fuente de verdad para esos datos.",
-        "Regla de Longitud: Si un texto generado excede el límite de caracteres, reescríbelo para que cumpla. Procura usar entre el 90-100% del espacio disponible."
+    # --- INICIO DEL CAMBIO CLAVE: REESTRUCTURACIÓN DE INSTRUCCIONES ---
+    
+    # 4. Instrucciones Generales y Específicas Claras
+    instrucciones_maestras = [
+        "Tu tarea es completar el 100% de la plantilla JSON que te proporciono al final.",
+        "Regla de Oro para Datos: Para precios, monedas o descuentos, DEBES usar exclusivamente la información de la sección 'Mercados y planes disponibles'. Es tu única fuente de verdad.",
+        "Regla de Longitud: Respeta estrictamente el límite de caracteres para cada campo. Los límites son:",
     ]
+    
+    # Añadimos los límites de caracteres de forma explícita
+    for camp, fields in CAMPAIGNS_STRUCTURE.items():
+        for field, (count, limit) in fields.items():
+            instrucciones_maestras.append(f"  - {camp} -> {field}: {limit} caracteres máx.")
 
-    especificaciones_por_campaña = ["\nEspecificaciones detalladas por tipo de campaña:"]
+    # Añadimos las especificaciones de estilo y detalle de forma clara
+    instrucciones_maestras.append("\nAdemás, sigue estas especificaciones de estilo y contenido para cada tipo de campaña:")
     for _, row in specs_df.iterrows():
-        # Creamos una instrucción clara para cada fila del excel de especificaciones
-        especificaciones_por_campaña.append(
-            f"- Para {row['platform']} ({row['campaign']}), en el campo '{row['title'].split(' ')[0]}': "
-            f"Estilo: {row['style']}. Detalles: {row['details']}. Objetivo: {row['objective']}."
+        # Limpiamos el nombre del campo para que coincida con las claves del JSON (ej. "headlines" en lugar de "Headlines 1")
+        campo_limpio = row['title'].split(' ')[0].lower().replace(' ','_')
+        instrucciones_maestras.append(
+            f"- Para la campaña '{row['campaign']}' en el campo '{campo_limpio}':"
+            f" Estilo requerido: {row['style']}. Detalles importantes: {row['details']}. Objetivo de comunicación: {row['objective']}."
         )
+
+    # --- FIN DEL CAMBIO CLAVE ---
 
     # 5. Ensamblar el prompt final
     prompt = (
-        f"Eres un generador de copies experto para campañas pagas. Tu tarea es generar un set de copies en formato JSON basado en los datos y reglas proporcionadas.\n\n"
+        f"Eres un generador de copies experto para campañas pagas. Tu tarea es generar un set completo de copies en formato JSON, siguiendo todas las reglas y datos proporcionados.\n\n"
         f"--- DATOS DE LA CAMPAÑA ---\n"
         f"Empresa: {briefs['company']}\n"
         f"Nombre de campaña: {briefs['campaign_name']}\n"
         f"Brief: {briefs['campaign_brief']}\n\n"
         f"--- CONTEXTO DEL PRODUCTO Y PLANES ---\n"
         f"{'\n'.join(info_block)}\n\n"
-        f"--- EJEMPLOS DE ESTILO Y TONO (NO USAR DATOS DE AQUÍ) ---\n"
+        f"--- EJEMPLOS DE ESTILO Y TONO ---\n"
         f"{ejemplos_block}\n\n"
         f"--- REGLAS E INSTRUCCIONES OBLIGATORIAS ---\n"
-        f"{'\n'.join(instrucciones_generales)}\n"
-        f"{'\n'.join(especificaciones_por_campaña)}\n\n"
-        f"--- TAREA FINAL ---\n"
-        f"Completa y devuelve SÓLO el objeto JSON con la siguiente estructura, siguiendo todas las reglas anteriores. Asegúrate de que las cantidades de cada campo coincidan con la estructura solicitada.\n"
+        f"{'\n'.join(instrucciones_maestras)}\n\n"
+        f"--- TAREA FINAL: COMPLETA EL SIGUIENTE JSON ---\n"
+        f"Basado en todo lo anterior, completa el 100% del siguiente objeto JSON. No dejes campos vacíos. Genera la cantidad exacta de textos solicitada para cada campo.\n"
         f"{json.dumps(template, ensure_ascii=False, indent=2)}"
     )
     return prompt
