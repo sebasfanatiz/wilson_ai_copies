@@ -167,13 +167,16 @@ Textos a traducir:
 
 # En agente.py, reemplaza ÚNICAMENTE esta función
 
+# En agente.py, reemplaza ÚNICAMENTE esta función
+
 def generar_prompt_multi(briefs: dict,
                          ref_df: pd.DataFrame,
                          content_info: dict,
                          plan_info: dict,
                          specs_df: pd.DataFrame) -> str:
     
-    # 1. Construir ejemplos (con el contexto de mercado que ya habías añadido)
+    # Las partes 1, 2 y 3 para construir los bloques de datos no cambian
+    # 1. Construir ejemplos con contexto de mercado
     ejemplos = []
     muestra = ref_df.sample(n=min(10, len(ref_df)), random_state=42)
     for _, row in muestra.iterrows():
@@ -183,15 +186,14 @@ def generar_prompt_multi(briefs: dict,
         )
     ejemplos_block = "\n".join(ejemplos)
 
-    # 2. Construir la estructura JSON de salida (sin cambios)
+    # 2. Construir la estructura JSON de salida
     template = {}
     for market in content_info["markets"]:
         template[market] = {}
         for camp, fields in CAMPAIGNS_STRUCTURE.items():
-            # Aquí le decimos cuántos items generar para cada campo
             template[market][camp] = {field: ["" for _ in range(count)] if count > 1 else "" for field, (count, _) in fields.items()}
 
-    # 3. Construir bloque de información factual (sin cambios)
+    # 3. Construir bloque de información factual
     info_block = [f"Contenido identificado: {content_info['content_name']}"]
     if content_info.get("details"): info_block.append(f"Detalles: {content_info['details']}")
     info_block.append(f"Idiomas de narración disponibles: {', '.join(content_info['languages'])}")
@@ -204,24 +206,23 @@ def generar_prompt_multi(briefs: dict,
         ]) or "Sin planes configurados"
         info_block.append(f"- Mercado {market}: {planes_str}")
 
-    # --- INICIO DEL CAMBIO CLAVE: REESTRUCTURACIÓN DE INSTRUCCIONES ---
-    
-    # 4. Instrucciones Generales y Específicas Claras
-    instrucciones_maestras = [
-        "Tu tarea es completar el 100% de la plantilla JSON que te proporciono al final.",
-        "Regla de Oro para Datos: Para precios, monedas o descuentos, DEBES usar exclusivamente la información de la sección 'Mercados y planes disponibles'. Es tu única fuente de verdad.",
-        "Regla de Longitud: Respeta estrictamente el límite de caracteres para cada campo. Los límites son:",
-    ]
-    
-    # Añadimos los límites de caracteres de forma explícita
-    for camp, fields in CAMPAIGNS_STRUCTURE.items():
-        for field, (count, limit) in fields.items():
-            instrucciones_maestras.append(f"  - {camp} -> {field}: {limit} caracteres máx.")
+    # --- INICIO DEL CAMBIO CLAVE: NUEVA PERSONALIDAD Y REGLAS MÁS EXIGENTES ---
 
-    # Añadimos las especificaciones de estilo y detalle de forma clara
-    instrucciones_maestras.append("\nAdemás, sigue estas especificaciones de estilo y contenido para cada tipo de campaña:")
+    # 4. Definimos la nueva personalidad y las instrucciones de alto rendimiento
+    personalidad = (
+        "Eres 'Wilson', el redactor publicitario #1 del mundo especializado en marketing deportivo y servicios de streaming por suscripción. "
+        "Tu estilo es apasionado, enérgico y siempre centrado en la emoción del hincha. Entiendes la urgencia y la emoción del fútbol en vivo. "
+        "Tu misión es crear copies que generen una necesidad irresistible de ver el partido AHORA."
+    )
+
+    instrucciones_maestras = [
+        "Proceso de Pensamiento Obligatorio: Antes de escribir cada texto, debes seguir mentalmente estos 3 pasos: 1. ¿Cuál es el beneficio más potente para el hincha (ej. exclusividad, ver a su equipo, no perderse el clásico)? 2. ¿Qué emoción quiero provocar (urgencia, pasión, miedo a perdérselo)? 3. ¿Cuál es el llamado a la acción más directo? Una vez que tengas esto claro, escribe el copy.",
+        "Regla de Oro de Calidad y Longitud: Es INACEPTABLE entregar textos cortos, genéricos o que no llenen el espacio. Tu reputación como el mejor depende de ello. DEBES maximizar el uso del espacio disponible, apuntando siempre al 95-100% del límite de caracteres. Cada copy debe ser vibrante, específico y rebosar energía.",
+        "Regla de Datos: Para precios, monedas o descuentos, la sección 'Mercados y planes disponibles' es tu única fuente de verdad y su uso es obligatorio."
+    ]
+
+    especificaciones_por_campaña = ["\nEspecificaciones detalladas por tipo de campaña:"]
     for _, row in specs_df.iterrows():
-        # Limpiamos el nombre del campo para que coincida con las claves del JSON (ej. "headlines" en lugar de "Headlines 1")
         campo_limpio = row['title'].split(' ')[0].lower().replace(' ','_')
         instrucciones_maestras.append(
             f"- Para la campaña '{row['campaign']}' en el campo '{campo_limpio}':"
@@ -230,21 +231,21 @@ def generar_prompt_multi(briefs: dict,
 
     # --- FIN DEL CAMBIO CLAVE ---
 
-    # 5. Ensamblar el prompt final
+    # 5. Ensamblar el prompt final con la nueva estructura
     prompt = (
-        f"Eres un generador de copies experto para campañas pagas. Tu tarea es generar un set completo de copies en formato JSON, siguiendo todas las reglas y datos proporcionados.\n\n"
-        f"--- DATOS DE LA CAMPAÑA ---\n"
+        f"{personalidad}\n\n"
+        f"=== CONTEXTO GENERAL ===\n"
         f"Empresa: {briefs['company']}\n"
         f"Nombre de campaña: {briefs['campaign_name']}\n"
         f"Brief: {briefs['campaign_brief']}\n\n"
-        f"--- CONTEXTO DEL PRODUCTO Y PLANES ---\n"
+        f"=== DATOS DEL PRODUCTO Y PLANES (Fuente de Verdad) ===\n"
         f"{'\n'.join(info_block)}\n\n"
-        f"--- EJEMPLOS DE ESTILO Y TONO ---\n"
+        f"=== EJEMPLOS DE ESTILO Y TONO ===\n"
         f"{ejemplos_block}\n\n"
-        f"--- REGLAS E INSTRUCCIONES OBLIGATORIAS ---\n"
+        f"=== TUS REGLAS Y PROCESO MENTAL ===\n"
         f"{'\n'.join(instrucciones_maestras)}\n\n"
-        f"--- TAREA FINAL: COMPLETA EL SIGUIENTE JSON ---\n"
-        f"Basado en todo lo anterior, completa el 100% del siguiente objeto JSON. No dejes campos vacíos. Genera la cantidad exacta de textos solicitada para cada campo.\n"
+        f"=== TAREA FINAL: COMPLETA EL JSON ===\n"
+        f"Siguiendo tu proceso mental y todas las reglas, completa al 100% la siguiente plantilla JSON. No dejes ningún campo vacío y maximiza la longitud de cada texto.\n"
         f"{json.dumps(template, ensure_ascii=False, indent=2)}"
     )
     return prompt
