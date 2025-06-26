@@ -58,13 +58,17 @@ def obtener_info_contenido(brief: str,
                            content_df: pd.DataFrame,
                            plans_df: pd.DataFrame) -> tuple:
     brief_lower = brief.lower()
-    mask_nombre = content_df["content_name"].str.lower().apply(lambda x: x in brief_lower)
+
+    mask_nombre = content_df["content_name"].astype(str).str.lower().apply(lambda x: x in brief_lower)
     filas_match = content_df[mask_nombre]
+    
     if filas_match.empty:
-        mask_pais = content_df["content_country"].str.lower().apply(lambda x: x in brief_lower)
+        mask_pais = content_df["content_country"].astype(str).str.lower().apply(lambda x: x in brief_lower)
         filas_match = content_df[mask_pais]
+
     if filas_match.empty:
         filas_match = content_df.head(1)
+        
     fila = filas_match.iloc[0]
     content_info = {
         "content_name": fila["content_name"],
@@ -72,15 +76,19 @@ def obtener_info_contenido(brief: str,
         "details": fila.get("content_details", ""),
         "markets": [m.strip() for m in str(fila.get("markets_available", "")).split(",") if m.strip()]
     }
+    
     plans_available = [p.strip() for p in str(fila.get("plans_available", "")).split(",") if p.strip()]
     plan_info = {}
+    
     for market in content_info["markets"]:
         planes = []
         for plan_nom in plans_available:
+            
             mask_plan = (
-                (plans_df["plan_name"].str.lower() == plan_nom.lower()) &
-                (plans_df["markets"].str.upper().str.contains(market.upper(), na=False))
+                (plans_df["plan_name"].astype(str).str.lower() == plan_nom.lower()) &
+                (plans_df["markets"].astype(str).str.upper().str.contains(market.upper(), na=False))
             )
+            
             filas_plan = plans_df[mask_plan]
             if not filas_plan.empty:
                 p = filas_plan.iloc[0]
@@ -94,6 +102,7 @@ def obtener_info_contenido(brief: str,
                     "marketing_discount": p["marketing_discount"]
                 })
         plan_info[market] = planes
+        
     return content_info, plan_info
 
 def limpiar_json(response_text: str) -> dict:
@@ -163,19 +172,12 @@ Textos a traducir:
             pass
     return texts
 
-# En agente.py, reemplaza la función completa
-
-# En agente.py, reemplaza ÚNICAMENTE esta función
-
-# En agente.py, reemplaza ÚNICAMENTE esta función
-
 def generar_prompt_multi(briefs: dict,
                          ref_df: pd.DataFrame,
                          content_info: dict,
                          plan_info: dict,
                          specs_df: pd.DataFrame) -> str:
-    
-    # Las partes 1, 2 y 3 para construir los bloques de datos no cambian
+                             
     # 1. Construir ejemplos con contexto de mercado
     ejemplos = []
     muestra = ref_df.sample(n=min(10, len(ref_df)), random_state=42)
@@ -206,8 +208,6 @@ def generar_prompt_multi(briefs: dict,
         ]) or "Sin planes configurados"
         info_block.append(f"- Mercado {market}: {planes_str}")
 
-    # --- INICIO DEL CAMBIO CLAVE: NUEVA PERSONALIDAD Y REGLAS MÁS EXIGENTES ---
-
     # 4. Definimos la nueva personalidad y las instrucciones de alto rendimiento
     personalidad = (
         "Eres 'Wilson', el redactor publicitario #1 del mundo especializado en marketing deportivo y servicios de streaming por suscripción. "
@@ -228,8 +228,6 @@ def generar_prompt_multi(briefs: dict,
             f"- Para la campaña '{row['campaign']}' en el campo '{campo_limpio}':"
             f" Estilo requerido: {row['style']}. Detalles importantes: {row['details']}. Objetivo de comunicación: {row['objective']}."
         )
-
-    # --- FIN DEL CAMBIO CLAVE ---
 
     # 5. Ensamblar el prompt final con la nueva estructura
     prompt = (
