@@ -79,7 +79,7 @@ def obtener_info_contenido(brief: str,
         for plan_nom in plans_available:
             mask_plan = (
                 (plans_df["plan_name"].str.lower() == plan_nom.lower()) &
-                (plans_df["markets"].str.upper() == market.upper())
+                (plans_df["markets"].str.upper().str.contains(market.upper(), na=False))
             )
             filas_plan = plans_df[mask_plan]
             if not filas_plan.empty:
@@ -163,140 +163,77 @@ Textos a traducir:
             pass
     return texts
 
+# En agente.py, reemplaza la función completa
+
 def generar_prompt_multi(briefs: dict,
                          ref_df: pd.DataFrame,
                          content_info: dict,
                          plan_info: dict,
                          specs_df: pd.DataFrame) -> str:
+    
+    # 1. Construir ejemplos con contexto de mercado (Solución 1)
     ejemplos = []
     muestra = ref_df.sample(n=min(10, len(ref_df)), random_state=42)
     for _, row in muestra.iterrows():
+        market_info = row.get('Market', 'General')
         ejemplos.append(
-            f"- [{row['Idioma']}] {row['Platform']} {row['Tipo']} {row['Campo']}: \"{row['Texto']}\""
+            f"- [{market_info}] [{row['Idioma']}] {row['Platform']} {row['Tipo']} {row['Campo']}: \"{row['Texto']}\""
         )
     ejemplos_block = "\n".join(ejemplos)
+
+    # 2. Construir la estructura JSON de salida (sin cambios)
     template = {}
     for market in content_info["markets"]:
         template[market] = {}
         for camp, fields in CAMPAIGNS_STRUCTURE.items():
-            template[market][camp] = {field: ([] if count>1 else "") for field,(count,_) in fields.items()}
+            template[market][camp] = {field: ([] if count > 1 else "") for field, (count, _) in fields.items()}
+
+    # 3. Construir bloque de información factual (sin cambios)
     info_block = [f"Contenido identificado: {content_info['content_name']}"]
     if content_info.get("details"): info_block.append(f"Detalles: {content_info['details']}")
     info_block.append(f"Idiomas de narración disponibles: {', '.join(content_info['languages'])}")
     info_block.append("")
-    info_block.append("Mercados y planes disponibles:")
+    info_block.append("Mercados y planes disponibles (Fuente de Verdad para Precios):")
     for market, planes in plan_info.items():
         planes_str = "; ".join([
             f"{p['plan_name']} ({p['recurring_period']}) a {p['currency_symbol']}{p['price']} {p['currency']}" + (f" con {p['marketing_discount']}% de descuento" if p['has_discount'].lower()=="si" else "")
             for p in planes
         ]) or "Sin planes configurados"
-        info_block.append(f"- Mercado {market}: idiomas [{', '.join(content_info['languages'])}]; planes: {planes_str}")
-    instrucciones = [
-        "Regla global: • Si un texto excede el límite máximo, reescríbelo... • Si está por debajo del 60 %, expándelo... • Procura acercarte al 95-100 %."
+        info_block.append(f"- Mercado {market}: {planes_str}")
+
+    # 4. Construir bloque de instrucciones claras y no conflictivas (Solución 3 - CAMBIO CLAVE)
+    instrucciones_generales = [
+        "Regla de Oro: Para CUALQUIER dato como precios, monedas o descuentos, DEBES usar exclusivamente la información de la sección 'Mercados y planes disponibles'. Es tu única fuente de verdad para esos datos.",
+        "Regla de Longitud: Si un texto generado excede el límite de caracteres, reescríbelo para que cumpla. Procura usar entre el 90-100% del espacio disponible."
     ]
-    for _,row in specs_df.iterrows():
-        instrucciones.append(
-            f"{row['platform']} {row['campaign']}: genera exactamente {int(row['quantity'])} {row['title']} (máx {int(row['characters'])} car.); {row['style']}; {row['details']}; objetivo: {row['objective']}."
+
+    especificaciones_por_campaña = ["\nEspecificaciones detalladas por tipo de campaña:"]
+    for _, row in specs_df.iterrows():
+        # Creamos una instrucción clara para cada fila del excel de especificaciones
+        especificaciones_por_campaña.append(
+            f"- Para {row['platform']} ({row['campaign']}), en el campo '{row['title'].split(' ')[0]}': "
+            f"Estilo: {row['style']}. Detalles: {row['details']}. Objetivo: {row['objective']}."
         )
-    instrucciones.append(
-        "Verificación automática: antes de responder, corrige cualquier línea que no cumpla longitud o sea redundante..."
-    )
+
+    # 5. Ensamblar el prompt final
     prompt = (
-        f"Eres un generador de copies experto para campañas pagas...\n\n"
-        f"Empresa: {briefs['company']}\nContexto: {briefs['company_context']}\nPropuesta de valor: {briefs['value_proposition']}\n"
-        f"Nombre de campaña: {briefs['campaign_name']}\nBrief: {briefs['campaign_brief']}\n"
-        f"Comentarios adicionales: {briefs['extras']}\n\n"
+        f"Eres un generador de copies experto para campañas pagas. Tu tarea es generar un set de copies en formato JSON basado en los datos y reglas proporcionadas.\n\n"
+        f"--- DATOS DE LA CAMPAÑA ---\n"
+        f"Empresa: {briefs['company']}\n"
+        f"Nombre de campaña: {briefs['campaign_name']}\n"
+        f"Brief: {briefs['campaign_brief']}\n\n"
+        f"--- CONTEXTO DEL PRODUCTO Y PLANES ---\n"
         f"{'\n'.join(info_block)}\n\n"
-        f"Ejemplos de best performers:\n{ejemplos_block}\n\n"
-        f"Instrucciones:\n- {'\n- '.join(instrucciones)}\n\n"
-        f"Devuelve SÓLO un JSON con esta plantilla:\n{json.dumps(template, ensure_ascii=False, indent=2)}"
+        f"--- EJEMPLOS DE ESTILO Y TONO (NO USAR DATOS DE AQUÍ) ---\n"
+        f"{ejemplos_block}\n\n"
+        f"--- REGLAS E INSTRUCCIONES OBLIGATORIAS ---\n"
+        f"{'\n'.join(instrucciones_generales)}\n"
+        f"{'\n'.join(especificaciones_por_campaña)}\n\n"
+        f"--- TAREA FINAL ---\n"
+        f"Completa y devuelve SÓLO el objeto JSON con la siguiente estructura, siguiendo todas las reglas anteriores. Asegúrate de que las cantidades de cada campo coincidan con la estructura solicitada.\n"
+        f"{json.dumps(template, ensure_ascii=False, indent=2)}"
     )
     return prompt
-
-# En agente.py, añade esta nueva función completa.
-
-def corregir_y_refinar_copies(data: dict, plan_info: dict) -> dict:
-    """
-    Revisa los copies generados, identifica precios incorrectos y los corrige
-    usando un segundo llamado a la API enfocado solo en la precisión.
-    """
-    print("Iniciando fase de corrección y refinamiento de precios...")
-    textos_a_corregir = []
-    referencias = []
-
-    # 1. Recolectar todos los textos que mencionan un precio
-    for market, market_data in data.items():
-        if market not in plan_info or not plan_info[market]:
-            continue # Si no hay info de planes para este mercado, lo saltamos
-
-        # Tomamos el primer plan como referencia para el precio correcto
-        plan_referencia = plan_info[market][0]
-        precio_correcto = f"{plan_referencia['currency_symbol']}{plan_referencia['price']}"
-
-        for camp, fields in CAMPAIGNS_STRUCTURE.items():
-            camp_data = market_data.get(camp, {})
-            for field, (count, limit) in fields.items():
-                texts = camp_data.get(field, [])
-                if not isinstance(texts, list):
-                    texts = [texts]
-                
-                for i, texto in enumerate(texts):
-                    # Buscamos cualquier patrón de precio (ej. $9.99, 9,99 USD, etc.)
-                    if re.search(r'(\$|\€|\£|USD|CAD|EUR)\s*\d+([.,]\d+)?', texto):
-                        textos_a_corregir.append(texto)
-                        # Guardamos la información necesaria para la corrección
-                        referencias.append({
-                            "market": market, "camp": camp, "field": field, "index": i,
-                            "precio_correcto": precio_correcto, "limite_caracteres": limit
-                        })
-
-    if not textos_a_corregir:
-        print("No se encontraron precios para corregir. Proceso finalizado.")
-        return data
-
-    # 2. Construir un prompt único para corregir todos los textos en un solo batch
-    bloques_de_correccion = []
-    for i, texto in enumerate(textos_a_corregir):
-        ref = referencias[i]
-        bloque = (
-            f"--- Texto a Corregir N°{i+1} ---\n"
-            f"Texto Original: \"{texto}\"\n"
-            f"Contexto: Mercado -> {ref['market']}, Límite -> {ref['limite_caracteres']} caracteres\n"
-            f"Dato Correcto OBLIGATORIO: El precio para este mercado es {ref['precio_correcto']}.\n"
-            f"Instrucción: Reescribe el texto original para que use el precio correcto de {ref['precio_correcto']}. Mantén el tono original y no excedas el límite de caracteres."
-        )
-        bloques_de_correccion.append(bloque)
-
-    prompt_correccion = (
-        "Eres un editor de textos publicitarios. Tu única tarea es corregir los precios en los siguientes textos según las instrucciones específicas para cada uno. Devuelve solo los textos corregidos, uno por línea, sin ninguna numeración ni texto adicional.\n\n"
-        + "\n\n".join(bloques_de_correccion)
-    )
-
-    print(f"Enviando {len(textos_a_corregir)} textos a la API para corrección de precios...")
-    # 3. Llamar a la API para la corrección
-    resp = client.chat.completions.create(
-        messages=[{"role": "user", "content": prompt_correccion}],
-        model="llama-3.3-70b-versatile",
-        temperature=0.1 # Usamos baja temperatura para que sea preciso y no creativo
-    )
-    
-    textos_corregidos = [l.strip() for l in resp.choices[0].message.content.splitlines() if l.strip()]
-
-    # 4. Reemplazar los textos corregidos en la estructura de datos original
-    if len(textos_corregidos) == len(referencias):
-        for i, ref in enumerate(referencias):
-            texto_corregido = textos_corregidos[i]
-            # Nos aseguramos de no exceder el límite después de la corrección
-            if len(texto_corregido) > ref['limite_caracteres']:
-                texto_corregido = texto_corregido[:ref['limite_caracteres']]
-            
-            data[ref['market']][ref['camp']][ref['field']][ref['index']] = texto_corregido
-        print("Corrección de precios completada exitosamente.")
-    else:
-        print("ADVERTENCIA: El número de textos corregidos no coincide con los enviados. No se aplicaron las correcciones.")
-
-    return data
-                            
 
 def generar_excel_multi(data: dict, filename: str = "copies_final.xlsx"):
     rows = []
@@ -370,30 +307,18 @@ def generar_copies(campaign_name: str, campaign_brief: str, output_filename: str
         "extras": os.getenv("CAMPAIGN_EXTRAS","")
     }
 
-    # --- FLUJO PRINCIPAL MODIFICADO ---
-
-    # 1. Obtenemos los datos y construimos el prompt creativo
+    # Forma correcta de obtener la ruta de la carpeta del proyecto
     base_path = os.path.abspath(os.path.dirname(__file__))
     df_refs = cargar_referencias(os.path.join(base_path, "Mejor_Performing_Copies_Paid_Fanatiz.xlsx"))
     df_content = cargar_contenidos(os.path.join(base_path, "content_by_country.xlsx"))
     df_plans = cargar_planes(os.path.join(base_path, "plans_and_pricing.xlsx"))
     df_specs = cargar_specs(os.path.join(base_path, "platforms_and_campaigns_specs.xlsx"))
     content_info, plan_info = obtener_info_contenido(briefs_config["campaign_brief"], df_content, df_plans)
-    
     prompt = generar_prompt_multi(briefs_config, df_refs, content_info, plan_info, df_specs)
-    
-    # 2. PRIMER LLAMADO A LA API: El Agente Creativo genera los copies (puede tener errores de precio)
-    print("FASE 1: Generación creativa de copies...")
     resp = client.chat.completions.create(
         messages=[{"role":"system","content":"You are a helpful assistant."}, {"role":"user","content":prompt}],
         model="llama-3.3-70b-versatile", temperature=0.3
     )
     data = limpiar_json(resp.choices[0].message.content)
-    
-    # 3. SEGUNDO LLAMADO A LA API (SI ES NECESARIO): El Agente Editor corrige los precios
-    data_corregida = corregir_y_refinar_copies(data, plan_info)
-    
-    # 4. Generamos el Excel con los datos ya corregidos y refinados
-    generar_excel_multi(data_corregida, filename=output_filename)
-    
+    generar_excel_multi(data, filename=output_filename)
     return output_filename
