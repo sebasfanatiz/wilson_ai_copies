@@ -106,10 +106,23 @@ def obtener_info_contenido(brief: str,
     return content_info, plan_info
 
 def limpiar_json(response_text: str) -> dict:
+    if not response_text:
+        print("ADVERTENCIA: La respuesta de la API estaba vacía.")
+        return {}
+        
     start = response_text.find('{')
     end = response_text.rfind('}') + 1
+    
+    if start == -1:
+        print("ADVERTENCIA: La respuesta de la API no contenía un objeto JSON.")
+        return {}
+
     raw = response_text[start:end]
-    return json.loads(raw, strict=False)
+    try:
+        return json.loads(raw, strict=False)
+    except json.JSONDecodeError:
+        print("ADVERTENCIA: No se pudo decodificar el JSON extraído de la respuesta.")
+        return {}
 
 def preparar_batch(texts: list, limit: int, tipo: str) -> list:
     df = pd.DataFrame({"Original": texts, "Reescrito": texts.copy()})
@@ -242,8 +255,8 @@ def generar_prompt_multi(briefs: dict,
         f"{ejemplos_block}\n\n"
         f"=== TUS REGLAS Y PROCESO MENTAL ===\n"
         f"{'\n'.join(instrucciones_maestras)}\n\n"
-        f"=== TAREA FINAL: COMPLETA EL JSON ===\n"
-        f"Siguiendo tu proceso mental y todas las reglas, completa al 100% la siguiente plantilla JSON. No dejes ningún campo vacío y maximiza la longitud de cada texto.\n"
+         f"=== TAREA FINAL: DEVOLVER SÓLO EL JSON ===\n"
+        f"Tu única y exclusiva salida debe ser el siguiente objeto JSON, completado en su totalidad. No incluyas '```json', saludos, ni ningún otro texto fuera del objeto JSON.\n"
         f"{json.dumps(template, ensure_ascii=False, indent=2)}"
     )
     return prompt
@@ -329,8 +342,18 @@ def generar_copies(campaign_name: str, campaign_brief: str, output_filename: str
     content_info, plan_info = obtener_info_contenido(briefs_config["campaign_brief"], df_content, df_plans)
     prompt = generar_prompt_multi(briefs_config, df_refs, content_info, plan_info, df_specs)
     resp = client.chat.completions.create(
-        messages=[{"role":"system","content":"You are a helpful assistant."}, {"role":"user","content":prompt}],
-        model="llama-3.3-70b-versatile", temperature=0.3
+        messages=[
+            {
+                "role": "system",
+                "content": "Eres un asistente experto en devolver respuestas estructuradas. Tu única función es generar un objeto JSON basado en las instrucciones del usuario. No debes añadir texto introductorio, explicaciones, ni comentarios. Tu salida debe ser exclusivamente el código JSON."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        model="llama-3.3-70b-versatile", 
+        temperature=0.35, # Subimos un poco la temperatura para fomentar la creatividad de 'Wilson'
     )
     data = limpiar_json(resp.choices[0].message.content)
     generar_excel_multi(data, filename=output_filename)
