@@ -58,17 +58,13 @@ def obtener_info_contenido(brief: str,
                            content_df: pd.DataFrame,
                            plans_df: pd.DataFrame) -> tuple:
     brief_lower = brief.lower()
-
-    mask_nombre = content_df["content_name"].astype(str).str.lower().apply(lambda x: x in brief_lower)
+    mask_nombre = content_df["content_name"].str.lower().apply(lambda x: x in brief_lower)
     filas_match = content_df[mask_nombre]
-    
     if filas_match.empty:
-        mask_pais = content_df["content_country"].astype(str).str.lower().apply(lambda x: x in brief_lower)
+        mask_pais = content_df["content_country"].str.lower().apply(lambda x: x in brief_lower)
         filas_match = content_df[mask_pais]
-
     if filas_match.empty:
         filas_match = content_df.head(1)
-        
     fila = filas_match.iloc[0]
     content_info = {
         "content_name": fila["content_name"],
@@ -76,19 +72,15 @@ def obtener_info_contenido(brief: str,
         "details": fila.get("content_details", ""),
         "markets": [m.strip() for m in str(fila.get("markets_available", "")).split(",") if m.strip()]
     }
-    
     plans_available = [p.strip() for p in str(fila.get("plans_available", "")).split(",") if p.strip()]
     plan_info = {}
-    
     for market in content_info["markets"]:
         planes = []
         for plan_nom in plans_available:
-            
             mask_plan = (
-                (plans_df["plan_name"].astype(str).str.lower() == plan_nom.lower()) &
-                (plans_df["markets"].astype(str).str.upper().str.contains(market.upper(), na=False))
+                (plans_df["plan_name"].str.lower() == plan_nom.lower()) &
+                (plans_df["markets"].str.upper().str.contains(market.upper(), na=False))
             )
-            
             filas_plan = plans_df[mask_plan]
             if not filas_plan.empty:
                 p = filas_plan.iloc[0]
@@ -102,27 +94,13 @@ def obtener_info_contenido(brief: str,
                     "marketing_discount": p["marketing_discount"]
                 })
         plan_info[market] = planes
-        
     return content_info, plan_info
 
 def limpiar_json(response_text: str) -> dict:
-    if not response_text:
-        print("ADVERTENCIA: La respuesta de la API estaba vacía.")
-        return {}
-        
     start = response_text.find('{')
     end = response_text.rfind('}') + 1
-    
-    if start == -1:
-        print("ADVERTENCIA: La respuesta de la API no contenía un objeto JSON.")
-        return {}
-
     raw = response_text[start:end]
-    try:
-        return json.loads(raw, strict=False)
-    except json.JSONDecodeError:
-        print("ADVERTENCIA: No se pudo decodificar el JSON extraído de la respuesta.")
-        return {}
+    return json.loads(raw, strict=False)
 
 def preparar_batch(texts: list, limit: int, tipo: str) -> list:
     df = pd.DataFrame({"Original": texts, "Reescrito": texts.copy()})
@@ -190,74 +168,48 @@ def generar_prompt_multi(briefs: dict,
                          content_info: dict,
                          plan_info: dict,
                          specs_df: pd.DataFrame) -> str:
-                             
-    # 1. Construir ejemplos con contexto de mercado
     ejemplos = []
     muestra = ref_df.sample(n=min(10, len(ref_df)), random_state=42)
     for _, row in muestra.iterrows():
-        market_info = row.get('Market', 'General')
         ejemplos.append(
-            f"- [{market_info}] [{row['Idioma']}] {row['Platform']} {row['Tipo']} {row['Campo']}: \"{row['Texto']}\""
+            f"- [{row['Idioma']}] {row['Platform']} {row['Tipo']} {row['Campo']}: \"{row['Texto']}\""
         )
     ejemplos_block = "\n".join(ejemplos)
-
-    # 2. Construir la estructura JSON de salida
     template = {}
     for market in content_info["markets"]:
         template[market] = {}
         for camp, fields in CAMPAIGNS_STRUCTURE.items():
-            template[market][camp] = {field: ["" for _ in range(count)] if count > 1 else "" for field, (count, _) in fields.items()}
-
-    # 3. Construir bloque de información factual
+            template[market][camp] = {field: ([] if count>1 else "") for field,(count,_) in fields.items()}
     info_block = [f"Contenido identificado: {content_info['content_name']}"]
     if content_info.get("details"): info_block.append(f"Detalles: {content_info['details']}")
     info_block.append(f"Idiomas de narración disponibles: {', '.join(content_info['languages'])}")
     info_block.append("")
-    info_block.append("Mercados y planes disponibles (Fuente de Verdad para Precios):")
+    info_block.append("Mercados y planes disponibles:")
     for market, planes in plan_info.items():
         planes_str = "; ".join([
             f"{p['plan_name']} ({p['recurring_period']}) a {p['currency_symbol']}{p['price']} {p['currency']}" + (f" con {p['marketing_discount']}% de descuento" if p['has_discount'].lower()=="si" else "")
             for p in planes
         ]) or "Sin planes configurados"
-        info_block.append(f"- Mercado {market}: {planes_str}")
-
-    # 4. Definimos la nueva personalidad y las instrucciones de alto rendimiento
-    personalidad = (
-        "Eres 'Wilson', el redactor publicitario #1 del mundo especializado en marketing deportivo y servicios de streaming por suscripción. "
-        "Tu estilo es apasionado, enérgico y siempre centrado en la emoción del hincha. Entiendes la urgencia y la emoción del fútbol en vivo. "
-        "Tu misión es crear copies que generen una necesidad irresistible de ver el partido AHORA."
-    )
-
-    instrucciones_maestras = [
-        "Proceso de Pensamiento Obligatorio: Antes de escribir cada texto, debes seguir mentalmente estos 3 pasos: 1. ¿Cuál es el beneficio más potente para el hincha (ej. exclusividad, ver a su equipo, no perderse el clásico)? 2. ¿Qué emoción quiero provocar (urgencia, pasión, miedo a perdérselo)? 3. ¿Cuál es el llamado a la acción más directo? Una vez que tengas esto claro, escribe el copy.",
-        "Regla de Oro de Calidad y Longitud: Es INACEPTABLE entregar textos cortos, genéricos o que no llenen el espacio. Tu reputación como el mejor depende de ello. DEBES maximizar el uso del espacio disponible, apuntando siempre al 95-100% del límite de caracteres. Cada copy debe ser vibrante, específico y rebosar energía.",
-        "Regla de Datos: Para precios, monedas o descuentos, la sección 'Mercados y planes disponibles' es tu única fuente de verdad y su uso es obligatorio."
+        info_block.append(f"- Mercado {market}: idiomas [{', '.join(content_info['languages'])}]; planes: {planes_str}")
+    instrucciones = [
+        "Regla global: • Si un texto excede el límite máximo, reescríbelo... • Si está por debajo del 60 %, expándelo... • Procura acercarte al 95-100 %."
     ]
-
-    especificaciones_por_campaña = ["\nEspecificaciones detalladas por tipo de campaña:"]
-    for _, row in specs_df.iterrows():
-        campo_limpio = row['title'].split(' ')[0].lower().replace(' ','_')
-        instrucciones_maestras.append(
-            f"- Para la campaña '{row['campaign']}' en el campo '{campo_limpio}':"
-            f" Estilo requerido: {row['style']}. Detalles importantes: {row['details']}. Objetivo de comunicación: {row['objective']}."
+    for _,row in specs_df.iterrows():
+        instrucciones.append(
+            f"{row['platform']} {row['campaign']}: genera exactamente {int(row['quantity'])} {row['title']} (máx {int(row['characters'])} car.); {row['style']}; {row['details']}; objetivo: {row['objective']}."
         )
-
-    # 5. Ensamblar el prompt final con la nueva estructura
+    instrucciones.append(
+        "Verificación automática: antes de responder, corrige cualquier línea que no cumpla longitud o sea redundante..."
+    )
     prompt = (
-        f"{personalidad}\n\n"
-        f"=== CONTEXTO GENERAL ===\n"
-        f"Empresa: {briefs['company']}\n"
-        f"Nombre de campaña: {briefs['campaign_name']}\n"
-        f"Brief: {briefs['campaign_brief']}\n\n"
-        f"=== DATOS DEL PRODUCTO Y PLANES (Fuente de Verdad) ===\n"
+        f"Eres un generador de copies experto para campañas pagas...\n\n"
+        f"Empresa: {briefs['company']}\nContexto: {briefs['company_context']}\nPropuesta de valor: {briefs['value_proposition']}\n"
+        f"Nombre de campaña: {briefs['campaign_name']}\nBrief: {briefs['campaign_brief']}\n"
+        f"Comentarios adicionales: {briefs['extras']}\n\n"
         f"{'\n'.join(info_block)}\n\n"
-        f"=== EJEMPLOS DE ESTILO Y TONO ===\n"
-        f"{ejemplos_block}\n\n"
-        f"=== TUS REGLAS Y PROCESO MENTAL ===\n"
-        f"{'\n'.join(instrucciones_maestras)}\n\n"
-         f"=== TAREA FINAL: DEVOLVER SÓLO EL JSON ===\n"
-        f"Tu única y exclusiva salida debe ser el siguiente objeto JSON, completado en su totalidad. No incluyas '```json', saludos, ni ningún otro texto fuera del objeto JSON.\n"
-        f"{json.dumps(template, ensure_ascii=False, indent=2)}"
+        f"Ejemplos de best performers:\n{ejemplos_block}\n\n"
+        f"Instrucciones:\n- {'\n- '.join(instrucciones)}\n\n"
+        f"Devuelve SÓLO un JSON con esta plantilla:\n{json.dumps(template, ensure_ascii=False, indent=2)}"
     )
     return prompt
 
@@ -342,18 +294,8 @@ def generar_copies(campaign_name: str, campaign_brief: str, output_filename: str
     content_info, plan_info = obtener_info_contenido(briefs_config["campaign_brief"], df_content, df_plans)
     prompt = generar_prompt_multi(briefs_config, df_refs, content_info, plan_info, df_specs)
     resp = client.chat.completions.create(
-        messages=[
-            {
-                "role": "system",
-                "content": "Eres un asistente experto en devolver respuestas estructuradas. Tu única función es generar un objeto JSON basado en las instrucciones del usuario. No debes añadir texto introductorio, explicaciones, ni comentarios. Tu salida debe ser exclusivamente el código JSON."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        model="llama-3.3-70b-versatile", 
-        temperature=0.35, # Subimos un poco la temperatura para fomentar la creatividad de 'Wilson'
+        messages=[{"role":"system","content":"You are a helpful assistant."}, {"role":"user","content":prompt}],
+        model="llama-3.3-70b-versatile", temperature=0.3
     )
     data = limpiar_json(resp.choices[0].message.content)
     generar_excel_multi(data, filename=output_filename)
