@@ -1,5 +1,4 @@
-# app.py - VERSIÓN FINAL COMPLETA (19 de Junio, 2025)
-
+# app.py
 from flask import Flask, render_template, request, send_from_directory, redirect, url_for, flash
 from datetime import datetime
 import threading
