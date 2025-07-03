@@ -6,6 +6,7 @@ import threading
 import os
 import re
 from groq import BadRequestError
+from openai import BadRequestError
 from agente import generar_copies
 
 app = Flask(__name__)
