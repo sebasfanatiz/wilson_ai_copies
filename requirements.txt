@@ -3,7 +3,4 @@ pandas
 openpyxl
 groq
 gunicorn
-re
-json
-os
 openai
