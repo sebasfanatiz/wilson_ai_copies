@@ -8,11 +8,9 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 
 # --- CONFIGURACIÓN GLOBAL ---
-# Inicializa el cliente de OpenAI
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-MODEL_CHAT = "gpt-4o"  # Se recomienda gpt-4o para máxima calidad
+MODEL_CHAT = "gpt-4o"
 
-# Estructura de campañas (constante)
 CAMPAIGNS_STRUCTURE = {
     "SEM": {"headlines": (15, 30), "long_headlines": (5, 90), "short_description": (1, 60), "long_descriptions": (4, 90)},
     "MetaDemandGen": {"primary_texts": (4, 250), "headlines": (3, 30), "descriptions": (3, 30)},
@@ -30,38 +28,62 @@ def cargar_contenidos(path): return pd.read_excel(path)
 def cargar_planes(path): return pd.read_excel(path)
 def cargar_specs(path): return pd.read_excel(path)
 
-def obtener_info_contenido(brief, content_df, plans_df):
-    # (Esta función no necesita cambios)
-    brief_lower = brief.lower()
-    filas = content_df[content_df["content_name"].str.lower().str.contains(brief_lower, na=False)]
-    if filas.empty:
-        filas = content_df[content_df["content_country"].str.lower().str.contains(brief_lower, na=False)]
-    if filas.empty:
-        filas = content_df.head(1)
-    row = filas.iloc[0]
-    content_info = { "content_name": row["content_name"], "languages": [l.strip() for l in str(row.get("content_languages","")).split(",") if l.strip()], "details": row.get("content_details",""), "markets": [m.strip() for m in str(row.get("markets_available","")).split(",") if m.strip()] }
-    plans_list = [p.strip() for p in str(row.get("plans_available","")).split(",") if p.strip()]
-    plan_info = {}
-    for market in content_info["markets"]:
-        matches = []
-        for plan_nom in plans_list:
-            m = re.match(r"(.+?)\s+(monthly|annual)$", plan_nom, flags=re.IGNORECASE)
-            name, period = (m.group(1), m.group(2).capitalize()) if m else (plan_nom, None)
-            mask = plans_df["plan_name"].str.lower() == name.lower()
-            if period: mask &= plans_df["recurring_period"] == period
-            sel = plans_df[mask]
-            if not sel.empty:
-                p = sel.iloc[0]
-                matches.append({ "plan_name": p["plan_name"], "recurring_period": p["recurring_period"], "price": p["price"], "currency": p["currency"], "currency_symbol": p["currency_symbol"], "has_discount": p["has_discount"], "marketing_discount": p["marketing_discount"] })
-        plan_info[market] = matches
-    return content_info, plan_info
+def obtener_info_contenido(campaign_name, brief, content_df, plans_df):
+    search_text = (campaign_name + " " + brief).lower()
+    final_rows_df = pd.DataFrame()
+
+    print("Iniciando búsqueda de contenido... (Paso 1: Buscando por nombre de plan)")
+    def check_plan_in_text(plans_str, text_to_search):
+        if not isinstance(plans_str, str): return False
+        full_plans = [p.strip().lower() for p in plans_str.split(',') if p.strip()]
+        base_plans = {p.replace('monthly', '').replace('annual', '').strip() for p in full_plans}
+        return any(base_plan in text_to_search for base_plan in base_plans if base_plan)
+
+    mask_plan = content_df['plans_available'].apply(check_plan_in_text, text_to_search=search_text)
+    plan_matched_rows = content_df[mask_plan]
+
+    if not plan_matched_rows.empty:
+        print(f"Coincidencia por plan encontrada en {len(plan_matched_rows)} fila(s).")
+        print("  -> Afinando búsqueda por nombre de contenido...")
+        mask_content_refine = plan_matched_rows['content_name'].str.lower().apply(lambda name: name in search_text if pd.notna(name) else False)
+        secondary_matched_rows = plan_matched_rows[mask_content_refine]
+        if not secondary_matched_rows.empty:
+            print(f"  -> Búsqueda afinada exitosa. Usando {len(secondary_matched_rows)} fila(s) específicas.")
+            final_rows_df = secondary_matched_rows
+        else:
+            print("  -> No se pudo afinar. Usando todas las filas coincidentes con el plan.")
+            final_rows_df = plan_matched_rows
+    else:
+        print("Búsqueda por plan no exitosa. (Paso 2: Buscando por nombre de contenido como fallback)")
+        mask_content_fallback = content_df['content_name'].str.lower().apply(lambda name: name in search_text if pd.notna(name) else False)
+        content_matched_rows = content_df[mask_content_fallback]
+        if not content_matched_rows.empty:
+            print(f"✅ Coincidencia encontrada por contenido en {len(content_matched_rows)} fila(s).")
+            final_rows_df = content_matched_rows
+        else:
+            print("Búsqueda por contenido también falló.")
+
+    if final_rows_df.empty:
+        print("ADVERTENCIA: No se encontró contenido para esta campaña.")
+    
+    return final_rows_df
 
 def limpiar_json(texto):
-    start, end = texto.find('{'), texto.rfind('}')+1
-    return json.loads(texto[start:end], strict=False)
+    print("Intentando limpiar y decodificar la respuesta JSON...")
+    start = texto.find('{')
+    end = texto.rfind('}') + 1
+    if start == -1 or end == 0:
+        print("ADVERTENCIA: No se encontró un objeto JSON válido en la respuesta de la IA.")
+        return {}
+    json_str = texto[start:end]
+    try:
+        return json.loads(json_str, strict=False)
+    except json.JSONDecodeError as e:
+        print(f"ERROR: Falló la decodificación del JSON. Error: {e}")
+        print(f"Respuesta problemática que se intentó decodificar: {json_str}")
+        return {}
 
 def preparar_batch(texts, limit, tipo, lang='es'):
-    # (Esta función no necesita cambios)
     df = pd.DataFrame({"Original": texts, "Reescrito": texts.copy()})
     mask = df["Original"].fillna("").astype(str).str.len() > limit
     idxs = df[mask].index.tolist()
@@ -86,7 +108,6 @@ def preparar_batch(texts, limit, tipo, lang='es'):
     return df["Reescrito"].tolist(), usage
 
 def traducir_batch(texts, target):
-    # (Esta función no necesita cambios)
     if not texts or all(not t for t in texts): return texts, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     if target not in ("en", "pt"): return texts, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     lang = "English (US)" if target == "en" else "Português (Brasil)"
@@ -108,21 +129,22 @@ Devuelve ÚNICAMENTE y SOLO un objeto JSON válido con la clave "translations", 
         return texts, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
 def generar_prompt_multi(briefs, ref_df, content_info, plan_info, specs_df):
-    # (Esta función no necesita cambios)
     ejemplos = ref_df.sample(n=min(10, len(ref_df)), random_state=42)
     block_ej = "\n".join(f"- [{r['Market']}][{r['Idioma']}] {r['Platform']} {r['Tipo']} {r['Campo']}: \"{r['Texto']}\"" for _, r in ejemplos.iterrows())
     template = {m: {c: {f: ([] if cnt > 1 else "") for f, (cnt, _) in fields.items()} for c, fields in CAMPAIGNS_STRUCTURE.items()} for m in content_info['markets']}
     info = [f"Contenido: {content_info['content_name']}"]
     if content_info['details']: info.append(f"Detalles: {content_info['details']}")
     info.append(f"Idiomas: {', '.join(content_info['languages'])}")
-    info.append("Planes y precios disponibles (Presta atención a las ofertas):")
+    info.append("Planes y precios disponibles (USA EL SÍMBOLO DE MONEDA EXACTO QUE SE MUESTRA):")
     for m, pls in plan_info.items():
         plan_descriptions = []
         if not pls: desc = "Sin planes definidos"
         else:
             for p in pls:
                 price_info = f"{p['plan_name']} {p['currency_symbol']}{p['price']}/{p['recurring_period']}"
-                if p.get('has_discount') and p.get('marketing_discount'): price_info += f" ¡EN OFERTA! ({p['marketing_discount']})"
+                has_discount = str(p.get('has_discount', 'no')).lower() == 'yes'
+                marketing_discount = p.get('marketing_discount')
+                if has_discount and marketing_discount: price_info += f" ¡EN OFERTA! ({marketing_discount})"
                 plan_descriptions.append(price_info)
             desc = "; ".join(plan_descriptions)
         info.append(f"- Mercado {m}: {desc}")
@@ -153,11 +175,11 @@ Reglas Fundamentales:
 - Estilo: Usa un lenguaje emocional, metáforas relacionadas al fútbol y la pasión, y crea un sentido de urgencia.
 - Para Demand Capture: Para cualquier campaña de tipo "DemandCapture", mencionar explícitamente los descuentos, ofertas o precios especiales disponibles en la lista de planes. Usa esa información para crear urgencia y atraer al usuario a comprar.
 - Siempre que se mencione el plan anual, mencionar el descuento con el que viene ese plan.
+- Símbolo de Moneda: Es CRÍTICO y OBLIGATORIO que uses el símbolo de moneda EXACTO que se especifica para cada plan en la sección 'Planes y precios'. No asumas ni uses un símbolo diferente.
 """.strip()
     return prompt
 
 def generar_excel_multi(data, filename="copies_final.xlsx"):
-    # (Esta función no necesita cambios)
     rows, all_tasks = [], []
     total_usage = {"prompt_tokens": 0, "completion_tokens": 0}
     print("--- Iniciando Fase 1: Generación y ajuste de copies en Español ---")
@@ -248,68 +270,100 @@ def generar_copies(campaign_name: str, campaign_brief: str, output_filename: str
     Devuelve una tupla: (nombre_del_archivo, resumen_del_costo_string)
     """
     print(f"Iniciando la generación de copies para la campaña: '{campaign_name}'")
-    
     total_usage = {"prompt_tokens": 0, "completion_tokens": 0}
     
-    briefs_config = {
-        "company": os.getenv("COMPANY_NAME", "Fanatiz"),
-        "company_context": os.getenv("COMPANY_CONTEXT", "Empresa de streaming de deportes..."),
-        "value_proposition": os.getenv("VALUE_PROPOSITION", "Fútbol 100% legal y seguro..."),
-        "campaign_name": campaign_name,
-        "campaign_brief": campaign_brief,
-        "extras": os.getenv("CAMPAIGN_EXTRAS", "")
-    }
-
+    # Carga de datos
     base_path = os.path.abspath(os.path.dirname(__file__))
-    
     print("Cargando archivos de referencia...")
     df_refs = cargar_referencias(os.path.join(base_path, "Mejor_Performing_Copies_Paid_Fanatiz.xlsx"))
     df_content = cargar_contenidos(os.path.join(base_path, "content_by_country.xlsx"))
     df_plans = cargar_planes(os.path.join(base_path, "plans_and_pricing.xlsx"))
     df_specs = cargar_specs(os.path.join(base_path, "platforms_and_campaigns_specs.xlsx"))
+
+    # 1. Obtenemos todas las filas de contenido relevantes para la campaña
+    relevant_content_df = obtener_info_contenido(campaign_name, campaign_brief, df_content, df_plans)
     
-    print("Procesando información de contenido y planes...")
-    content_info, plan_info = obtener_info_contenido(briefs_config["campaign_brief"], df_content, df_plans)
-    
-    print("Generando prompt para la IA...")
-    prompt = generar_prompt_multi(briefs_config, df_refs, content_info, plan_info, df_specs)
-    
-    print("Llamando a la API de IA para la generación inicial de copies...")
-    resp = client.chat.completions.create(
-        model=MODEL_CHAT,
-        messages=[{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": prompt}],
-        temperature=0.3
+    if relevant_content_df.empty:
+        print("\n❌ ERROR: Proceso detenido. No se encontró contenido relevante para la campaña.")
+        # Devolvemos un error claro para la webapp
+        return output_filename, "Error: No se encontró contenido o plan que coincida con la campaña solicitada. Por favor, revisa el brief."
+
+    # 2. Extraemos la lista de mercados únicos y procesamos cada uno
+    all_markets = set()
+    relevant_content_df['markets_available'].dropna().str.split(',').apply(
+        lambda lst: all_markets.update(item.strip() for item in lst if item.strip())
     )
-    total_usage["prompt_tokens"] += resp.usage.prompt_tokens
-    total_usage["completion_tokens"] += resp.usage.completion_tokens
-    
-    data = limpiar_json(resp.choices[0].message.content)
-    
-    print("Generando archivo Excel final con traducciones y ajustes...")
-    excel_usage = generar_excel_multi(data, filename=output_filename)
+    markets_to_process = sorted(list(all_markets))
+    print(f"\nMercados a procesar para esta campaña: {markets_to_process}")
+
+    final_data_for_excel = {}
+
+    for market in markets_to_process:
+        print("\n" + "="*20 + f" PROCESANDO MERCADO: {market} " + "="*20)
+        
+        market_content_df = relevant_content_df[relevant_content_df['markets_available'].str.contains(market, na=False)]
+        
+        content_names = ", ".join(market_content_df['content_name'].unique())
+        languages = set()
+        market_content_df['content_languages'].dropna().str.split(',').apply(lambda lst: languages.update(l.strip() for l in lst if l.strip()))
+        plans_available = set()
+        market_content_df['plans_available'].dropna().str.split(',').apply(lambda lst: plans_available.update(p.strip() for p in lst if p.strip()))
+
+        content_info = { "content_name": content_names, "languages": sorted(list(languages)), "details": "", "markets": [market] }
+        
+        plan_info = {}
+        matches = []
+        
+        def is_market_in_cell(available_markets, target_market):
+            if not isinstance(available_markets, str): return False
+            market_list = [m.strip().lower() for m in available_markets.split(',')]
+            return target_market.lower() in market_list
+
+        for plan_nom in sorted(list(plans_available)):
+            m = re.match(r"(.+?)\s+(monthly|annual)$", plan_nom, flags=re.IGNORECASE)
+            name, period = (m.group(1), m.group(2).capitalize()) if m else (plan_nom, None)
+
+            mask = ((df_plans["plan_name"].str.lower() == name.lower()) & (df_plans["markets"].apply(is_market_in_cell, target_market=market)))
+            if period: mask &= (df_plans["recurring_period"] == period)
+            sel = df_plans[mask]
+            
+            if not sel.empty:
+                matches.append(sel.iloc[0].to_dict())
+
+        plan_info[market] = matches
+
+        briefs = { 'campaign_name': campaign_name, 'campaign_brief': campaign_brief, 'company': 'Fanatiz', 'company_context': '...', 'value_proposition': '...', 'extras': '' }
+        
+        prompt = generar_prompt_multi(briefs, df_refs, content_info, plan_info, df_specs)
+        
+        resp = client.chat.completions.create( model=MODEL_CHAT, messages=[{'role':'system','content':'You are a helpful assistant.'}, {'role':'user','content':prompt}], temperature=0.3 )
+        
+        total_usage["prompt_tokens"] += resp.usage.prompt_tokens
+        total_usage["completion_tokens"] += resp.usage.completion_tokens
+        
+        raw_response = resp.choices[0].message.content
+        market_data = limpiar_json(raw_response)
+        
+        if market in market_data:
+            final_data_for_excel[market] = market_data[market]
+        else:
+             print(f"ADVERTENCIA: La respuesta de la IA para {market} no contenía la clave de mercado esperada.")
+
+    if not final_data_for_excel:
+        return output_filename, "Error: La IA no generó copies válidos después de procesar los mercados."
+
+    excel_usage = generar_excel_multi(final_data_for_excel, filename=output_filename)
     total_usage["prompt_tokens"] += excel_usage["prompt_tokens"]
     total_usage["completion_tokens"] += excel_usage["completion_tokens"]
     
     # --- CÁLCULO FINAL Y RESUMEN DE COSTOS ---
     PRICE_PER_MILLION_INPUT = 5.0
     PRICE_PER_MILLION_OUTPUT = 15.0
-
     input_cost = (total_usage["prompt_tokens"] / 1_000_000) * PRICE_PER_MILLION_INPUT
     output_cost = (total_usage["completion_tokens"] / 1_000_000) * PRICE_PER_MILLION_OUTPUT
     total_cost = input_cost + output_cost
 
-    summary = (
-        f"📊 **Resumen de Consumo y Costo** 💰\n"
-        f"-----------------------------------------\n"
-        f"Modelo Utilizado: {MODEL_CHAT}\n"
-        f"Tokens de Entrada (Prompt): {total_usage['prompt_tokens']:,}\n"
-        f"Tokens de Salida (Completion): {total_usage['completion_tokens']:,}\n"
-        f"**Tokens Totales:** {total_usage['prompt_tokens'] + total_usage['completion_tokens']:,}\n"
-        f"-----------------------------------------\n"
-        f"Costo de Entrada: ${input_cost:.6f} USD\n"
-        f"Costo de Salida: ${output_cost:.6f} USD\n"
-        f"**Costo Total Estimado:** **${total_cost:.6f} USD**\n"
-    )
+    summary = (f"📊 **Resumen de Consumo y Costo** 💰\n" f"-----------------------------------------\n" f"Modelo Utilizado: {MODEL_CHAT}\n" f"Tokens de Entrada (Prompt): {total_usage['prompt_tokens']:,}\n" f"Tokens de Salida (Completion): {total_usage['completion_tokens']:,}\n" f"**Tokens Totales:** {total_usage['prompt_tokens'] + total_usage['completion_tokens']:,}\n" f"-----------------------------------------\n" f"Costo de Entrada: ${input_cost:.6f} USD\n" f"Costo de Salida: ${output_cost:.6f} USD\n" f"**Costo Total Estimado:** **${total_cost:.6f} USD**\n")
     
     print(summary)
     print(f"¡Proceso completado! Archivo guardado en: {output_filename}")
