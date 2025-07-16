@@ -88,23 +88,46 @@ def preparar_batch(texts, limit, tipo, lang='es'):
     mask = df["Original"].fillna("").astype(str).str.len() > limit
     idxs = df[mask].index.tolist()
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
     if idxs:
         bloques = "\n".join(f'Texto {i+1}: "{df.at[i,"Original"]}"' for i in idxs)
+        
         if lang == 'en':
-            prompt_instructions = f"Your only task is to rewrite the following texts. It is CRITICAL and MANDATORY that each resulting text is under {limit} characters..."
+            prompt_instructions = f"Your only task is to rewrite the following texts. It is CRITICAL that each resulting text is under {limit} characters. Maintain the original meaning. Return only the rewritten texts, one per line, WITHOUT prefixes like 'Texto 1:' or quotes."
             system_message = "You are an expert copywriter who shortens texts in English."
         elif lang == 'pt':
-            prompt_instructions = f"Sua única tarefa é reescrever os textos a seguir. É CRÍTICO e OBRIGATÓRIO que cada texto resultante tenha menos de {limit} caracteres..."
+            prompt_instructions = f"Sua única tarefa é reescrever os textos a seguir. É CRÍTICO que cada texto resultante tenha menos de {limit} caracteres. Mantenha o significado original. Retorne apenas os textos reescritos, um por linha, SEM prefixos como 'Texto 1:' ou aspas."
             system_message = "Você é um redator especialista que encurta textos em português."
-        else:
-            prompt_instructions = f"Tu única tarea es reescribir los siguientes textos. Es CRÍTICO y OBLIGATORIO que cada texto resultante tenga menos de {limit} caracteres..."
+        else: # Español por defecto
+            prompt_instructions = f"Tu única tarea es reescribir los siguientes textos. Es CRÍTICO y OBLIGATORIO que cada texto resultante tenga menos de {limit} caracteres. Mantén el significado original. Devuelve solo los textos reescritos, uno por línea, SIN prefijos como 'Texto 1:' ni comillas."
             system_message = "Eres un redactor experto que acorta textos en español."
+
         prompt = f"{prompt_instructions}\n\n{bloques}".strip()
-        resp = client.chat.completions.create(model=MODEL_CHAT, messages=[{"role": "system", "content": system_message}, {"role": "user", "content": prompt}], temperature=0.3)
+        
+        resp = client.chat.completions.create(
+            model=MODEL_CHAT,
+            messages=[{"role": "system", "content": system_message},
+                      {"role": "user", "content": prompt}],
+            temperature=0.3
+        )
         usage = resp.usage
         lines = [l.strip() for l in resp.choices[0].message.content.splitlines() if l.strip()]
+
+        # --- INICIO DE LA LIMPIEZA DE SEGURIDAD ---
+        cleaned_lines = []
+        for line in lines:
+            # Elimina cualquier prefijo como "Texto 1: " y las comillas de los extremos.
+            cleaned_line = re.sub(r'^\s*Texto\s*\d+:\s*"?', '', line)
+            if cleaned_line.endswith('"'):
+                cleaned_line = cleaned_line[:-1]
+            cleaned_lines.append(cleaned_line.strip())
+        
+        lines = cleaned_lines # Usamos las líneas ya limpias
+        # --- FIN DE LA LIMPIEZA DE SEGURIDAD ---
+
         for i, new in zip(idxs, lines):
             df.at[i, "Reescrito"] = new if len(new) <= limit else new[:limit]
+    
     return df["Reescrito"].tolist(), usage
 
 def traducir_batch(texts, target):
