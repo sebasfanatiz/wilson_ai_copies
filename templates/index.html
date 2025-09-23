@@ -71,16 +71,32 @@
     </div>
 
     <form id="copy-form" action="/procesar" method="post">
+      <label for="plataforma">Plataforma</label>
+      <select id="plataforma" name="plataforma" required>
+        {% for p in plataformas %}
+          <option value="{{ p }}">{{ p }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="liga">Liga / Contenido</label>
+      <select id="liga" name="liga" required>
+        {% for l in ligas %}
+          <option value="{{ l }}">{{ l }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="langs">Idiomas (coma-separado)</label>
+      <input type="text" id="langs" name="langs" value="ES" placeholder="ES,EN,PT">
+
       <label for="titulo_campaña">Título de Campaña</label>
-      <input type="text" id="titulo_campaña" name="titulo_campaña"
-             value="{{ titulo or '' }}" placeholder="Ingresa el título" required>
+      <input type="text" id="titulo_campaña" name="titulo_campaña" value="{{ titulo or '' }}" placeholder="Ingresa el título" required>
 
       <label for="brief_campaña">Brief de Campaña</label>
-      <textarea id="brief_campaña" name="brief_campaña"
-                placeholder="Ingresa el brief completo" required>{{ brief or '' }}</textarea>
+      <textarea id="brief_campaña" name="brief_campaña" placeholder="Ingresa el brief completo" required>{{ brief or '' }}</textarea>
 
       <button type="submit">Generar Excel</button>
     </form>
+
 
     {% if archivos %}
       <div class="archivos">
@@ -135,3 +151,4 @@
   </div>
 </body>
 </html>
+
