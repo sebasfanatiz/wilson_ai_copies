@@ -6,7 +6,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 
 # --------- CONFIG GLOBAL ----------
-MODEL_CHAT = "gpt-5"  # mantener consistente con tu script final
+MODEL_CHAT = "gpt-5-mini"  # mantener consistente con tu script final
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 CAMPAIGNS_STRUCTURE = {
@@ -582,8 +582,8 @@ def generar_copies(
     total_usage["prompt_tokens"] += excel_usage["prompt_tokens"]
     total_usage["completion_tokens"] += excel_usage["completion_tokens"]
 
-    PRICE_PER_MILLION_INPUT = 5.0
-    PRICE_PER_MILLION_OUTPUT = 15.0
+    PRICE_PER_MILLION_INPUT = 0.250
+    PRICE_PER_MILLION_OUTPUT = 2.000
     input_cost  = (total_usage["prompt_tokens"] / 1_000_000) * PRICE_PER_MILLION_INPUT
     output_cost = (total_usage["completion_tokens"] / 1_000_000) * PRICE_PER_MILLION_OUTPUT
     total_cost  = input_cost + output_cost
@@ -603,3 +603,4 @@ def generar_copies(
     print(summary)
     print(f"¡Proceso completado! Archivo guardado en: {output_filename}")
     return output_filename, summary
+
