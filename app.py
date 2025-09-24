@@ -210,7 +210,7 @@ def procesar():
     path_error      = path_out + '.error'
     path_summary    = path_out + '.summary'
 
-    def worker_generar_excel(app_context, titulo_w, brief_w, plataforma_w, langs_w, liga_w, path_out_w, processing_w, error_w, summary_w):
+    def worker_generar_excel(app_context, titulo_w, brief_w, plataforma_w, langs_w, liga_w, markets_w, path_out_w, processing_w, error_w, summary_w):
         with app_context:
             with open(processing_w, 'w') as f: f.write(str(datetime.now()))
             try:
@@ -219,7 +219,7 @@ def procesar():
                     platform_name=plataforma_w,
                     langs_csv=langs_w,
                     league_selection=liga_w,
-                    output_filename=path_out_w
+                    output_filename=path_out_w,
                     markets_selected=markets_w
                 )
                 if cost_summary:
@@ -237,7 +237,7 @@ def procesar():
 
     thread = threading.Thread(
         target=worker_generar_excel,
-        args=(app.app_context(), titulo, brief, plataforma, langs_csv, liga, path_out, path_processing, path_error, path_summary)
+        args=(app.app_context(), titulo, brief, plataforma, langs_csv, liga, markets, path_out, path_processing, path_error, path_summary)
     )
     thread.start()
 
@@ -268,6 +268,7 @@ def descargar(filename):
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
+
 
 
 
