@@ -4,24 +4,36 @@
   <meta charset="UTF-8">
   <title>Wilson Generador de Copies AI</title>
   <style>
-    /* Tu CSS no cambia, se mantiene igual */
     @font-face {
       font-family: 'Gilroy';
       src: local('Gilroy Bold'), local('Gilroy-Bold');
       font-weight: 700;
     }
-    
-    <body id="page-body" style="background:#000;">
-    
+
+    /* body vuelve a tener color y tipografía base */
+    body {
+      font-family: 'Gilroy', sans-serif;
+      color: #FFFFFF;
+      background: #000;
+      margin: 0; padding: 0; min-height: 100vh;
+    }
+
+    .dynamic-bg {
+      background-repeat: no-repeat;
+      background-position: center center;
+      background-attachment: fixed;
+      background-size: cover;
+    }
+
     .container {
-      background-color: rgba(38, 25, 59, 0.8); max-width: 800px;
-      margin: 40px auto; padding: 20px; border-radius: 8px;
+      background-color: rgba(38, 25, 59, 0.8);
+      max-width: 800px; margin: 40px auto; padding: 20px; border-radius: 8px;
     }
     .header { text-align: center; margin-bottom: 20px; }
     .header img { max-width: 200px; display: block; margin: 0 auto 10px; }
     h1 { font-size: 2rem; color: #FF3200; margin: 0; }
     label { color: #FFFFFF; font-weight: 700; display: block; margin-top: 1em; }
-    input[type="text"], textarea {
+    input[type="text"], textarea, select {
       width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box;
       font-size: 1rem; border: 2px solid #FF3200; border-radius: 4px;
       background-color: rgba(255,255,255,0.1); color: #FFF;
@@ -43,21 +55,14 @@
     .archivos ul { list-style-type: none; padding: 0; }
     .archivos li { margin-bottom: 8px; }
     pre {
-      white-space: pre-wrap;
-      word-wrap: break-word;
-      font-family: monospace, sans-serif;
-      color: #fff;
-      font-size: 0.9em;
-    }
-    .dynamic-bg {
-      background-repeat: no-repeat;
-      background-position: center center;
-      background-attachment: fixed;
-      background-size: cover;
+      white-space: pre-wrap; word-wrap: break-word;
+      font-family: monospace, sans-serif; color: #fff; font-size: 0.9em;
     }
   </style>
 </head>
-<body>
+
+<!-- OJO: <body> va fuera del <style>. Le damos id para JS + clase para el fondo -->
+<body id="page-body" class="dynamic-bg">
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
       {% for category, message in messages %}
@@ -91,7 +96,7 @@
 
       <label for="markets">Mercados</label>
       <select id="markets" name="markets" multiple size="6" style="width:100%;">
-      <!-- Se llena dinámicamente -->
+        <!-- Se llena dinámicamente -->
       </select>
       <small>Tip: mantené Ctrl/⌘ para seleccionar varios.</small>
 
@@ -104,14 +109,15 @@
       <small style="color:#ddd">Tip: mantené Ctrl/Cmd para seleccionar varios.</small>
 
       <label for="titulo_campaña">Título de Campaña</label>
-      <input type="text" id="titulo_campaña" name="titulo_campaña" value="{{ titulo or '' }}" placeholder="Ingresa el título" required>
+      <input type="text" id="titulo_campaña" name="titulo_campaña"
+             value="{{ titulo or '' }}" placeholder="Ingresa el título" required>
 
       <label for="brief_campaña">Brief de Campaña</label>
-      <textarea id="brief_campaña" name="brief_campaña" placeholder="Ingresa el brief completo" required>{{ brief or '' }}</textarea>
+      <textarea id="brief_campaña" name="brief_campaña"
+                placeholder="Ingresa el brief completo" required>{{ brief or '' }}</textarea>
 
       <button type="submit">Generar Excel</button>
     </form>
-
 
     {% if archivos %}
       <div class="archivos">
@@ -119,23 +125,22 @@
         <ul style="padding-left: 0;">
           {% for item in archivos %}
             <li style="display: flex; flex-direction: column; justify-content: space-between; align-items: stretch; background-color: rgba(0,0,0,0.2); padding: 10px; border-radius: 4px; margin-bottom: 8px;">
-              
               <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
                 <div style="flex-grow: 1;">
-                  <strong style="color: #fff;">{{ item.nombre }}</strong>
-                  <br>
-                  <span style="color: #bbb; font-size: 0.8em;">
-                    Creado: {{ item.fecha }}
-                  </span>
+                  <strong style="color: #fff;">{{ item.nombre }}</strong><br>
+                  <span style="color: #bbb; font-size: 0.8em;">Creado: {{ item.fecha }}</span>
                 </div>
                 <div style="display: flex; align-items: center;">
                   {% if item.status == 'success' %}
-                    <a href="{{ url_for('descargar', filename=item.nombre) }}" style="background-color: #28a745; color: white; padding: 5px 10px; font-size: 0.8rem; border-radius: 4px; text-decoration: none; margin-right: 10px;">
+                    <a href="{{ url_for('descargar', filename=item.nombre) }}"
+                       style="background-color: #28a745; color: white; padding: 5px 10px; font-size: 0.8rem; border-radius: 4px; text-decoration: none; margin-right: 10px;">
                       Descargar
                     </a>
                   {% endif %}
                   <form action="{{ url_for('eliminar', filename=item.nombre) }}" method="POST" style="margin: 0;">
-                    <button type="submit" onclick="return confirm('¿Estás seguro de que quieres eliminar este registro?')" style="background-color: #dc3545; padding: 5px 10px; font-size: 0.8rem;">
+                    <button type="submit"
+                            onclick="return confirm('¿Estás seguro de que quieres eliminar este registro?')"
+                            style="background-color: #dc3545; padding: 5px 10px; font-size: 0.8rem;">
                       Eliminar
                     </button>
                   </form>
@@ -151,85 +156,29 @@
                   Estado: Procesando... por favor, recarga la página en unos momentos.
                 </div>
               {% endif %}
-              
+
               {% if item.summary %}
                 <div style="background-color: rgba(38,25,59,0.5); border-radius: 4px; padding: 10px; margin-top: 10px; border: 1px solid #FF3200;">
                   <pre>{{ item.summary }}</pre>
                 </div>
               {% endif %}
-              
             </li>
           {% endfor %}
         </ul>
       </div>
     {% endif %}
   </div>
+
+  <!-- Script ÚNICO: branding + ligas + mercados -->
   <script>
     (function () {
       const plataformaSel = document.getElementById('plataforma');
       const ligaSel = document.getElementById('liga');
       const marketsSel = document.getElementById('markets');
-
-      async function loadLigasForPlatform(platform) {
-        try {
-          const res = await fetch(`/api/ligas?platform=${encodeURIComponent(platform)}`);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const ligas = await res.json();
-          ligaSel.innerHTML = '';
-          (Array.isArray(ligas) ? ligas : ["Otro"]).forEach(l => {
-            const opt = document.createElement('option');
-            opt.value = l; opt.textContent = l;
-            ligaSel.appendChild(opt);
-          });
-          // después de recargar ligas, cargar mercados para la liga seleccionada
-          loadMarkets(platform, ligaSel.value);
-        } catch (e) {
-          console.error('No se pudieron cargar las ligas:', e);
-          ligaSel.innerHTML = '<option value="Otro">Otro</option>';
-          loadMarkets(platform, 'Otro');
-        }
-      }
-
-      async function loadMarkets(platform, league) {
-        try {
-          const url = `/api/markets?platform=${encodeURIComponent(platform)}&league=${encodeURIComponent(league)}`;
-          const res = await fetch(url);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const markets = await res.json(); // array de strings
-          marketsSel.innerHTML = '';
-          (Array.isArray(markets) ? markets : []).forEach(m => {
-            const opt = document.createElement('option');
-            opt.value = m; opt.textContent = m;
-            marketsSel.appendChild(opt);
-          });
-        } catch (e) {
-          console.error('No se pudieron cargar los mercados:', e);
-          marketsSel.innerHTML = '';
-        }
-      }
-
-      plataformaSel.addEventListener('change', (e) => {
-        loadLigasForPlatform(e.target.value);
-      });
-
-      ligaSel.addEventListener('change', () => {
-        loadMarkets(plataformaSel.value, ligaSel.value);
-      });
-
-      document.addEventListener('DOMContentLoaded', () => {
-        const current = plataformaSel.value || 'Fanatiz';
-        loadLigasForPlatform(current);
-      });
-    })();
-  </script>
-  <script>
-    (function () {
-      const plataformaSel = document.getElementById('plataforma');
-      const ligaSel = document.getElementById('liga');
       const bodyEl = document.getElementById('page-body');
       const logoEl = document.getElementById('brand-logo');
 
-      // Mapea plataforma -> assets
+      // Plataforma -> assets
       const BRAND_ASSETS = {
         "Fanatiz": {
           bg: "{{ url_for('static', filename='arte/fondo.webp') }}",
@@ -247,7 +196,6 @@
 
       function updateBranding(platform) {
         const assets = BRAND_ASSETS[platform] || BRAND_ASSETS["Fanatiz"];
-        bodyEl.classList.add('dynamic-bg');
         bodyEl.style.backgroundImage = `url('${assets.bg}')`;
         if (logoEl) logoEl.src = assets.logo;
       }
@@ -258,40 +206,56 @@
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const ligas = await res.json();
           ligaSel.innerHTML = '';
-          const items = Array.isArray(ligas) ? ligas : ["Otro"];
-          for (const l of items) {
+          (Array.isArray(ligas) ? ligas : ["Otro"]).forEach(l => {
             const opt = document.createElement('option');
-            opt.value = l;
-            opt.textContent = l;
+            opt.value = l; opt.textContent = l;
             ligaSel.appendChild(opt);
-          }
+          });
+          // luego de setear ligas, pedimos mercados para la liga seleccionada
+          await loadMarkets(platform, ligaSel.value);
         } catch (e) {
           console.error('No se pudieron cargar las ligas:', e);
-          ligaSel.innerHTML = '';
-          const opt = document.createElement('option');
-          opt.value = 'Otro';
-          opt.textContent = 'Otro';
-          ligaSel.appendChild(opt);
+          ligaSel.innerHTML = '<option value="Otro">Otro</option>';
+          await loadMarkets(platform, 'Otro');
         }
       }
 
-      plataformaSel.addEventListener('change', (e) => {
+      async function loadMarkets(platform, league) {
+        try {
+          const url = `/api/markets?platform=${encodeURIComponent(platform)}&league=${encodeURIComponent(league)}`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const markets = await res.json();
+          marketsSel.innerHTML = '';
+          (Array.isArray(markets) ? markets : []).forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m; opt.textContent = m;
+            marketsSel.appendChild(opt);
+          });
+        } catch (e) {
+          console.error('No se pudieron cargar los mercados:', e);
+          marketsSel.innerHTML = '';
+        }
+      }
+
+      // Cambios del usuario
+      plataformaSel.addEventListener('change', async (e) => {
         const platform = e.target.value;
         updateBranding(platform);
-        loadLigasForPlatform(platform);
+        await loadLigasForPlatform(platform);
       });
 
-      // Al cargar: asegurar ligas y branding consistentes con la plataforma por defecto
-      document.addEventListener('DOMContentLoaded', () => {
+      ligaSel.addEventListener('change', async () => {
+        await loadMarkets(plataformaSel.value, ligaSel.value);
+      });
+
+      // Inicial
+      document.addEventListener('DOMContentLoaded', async () => {
         const current = plataformaSel.value || 'Fanatiz';
         updateBranding(current);
-        loadLigasForPlatform(current);
+        await loadLigasForPlatform(current);
       });
     })();
   </script>
 </body>
 </html>
-
-
-
-
