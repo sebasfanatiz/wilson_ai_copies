@@ -466,6 +466,7 @@ def generar_copies(
     langs_csv: str = "ES",
     league_selection: str = "Otro",
     output_filename: str = "copies_generadas.xlsx"
+    markets_selected: list[str] | None = None
 ) -> tuple:
     """
     Genera copies con filtro por plataforma y liga.
@@ -510,12 +511,27 @@ def generar_copies(
     relevant_content_df['markets_available'].dropna().str.split(',').apply(
         lambda lst: all_markets.update(item.strip() for item in lst if item.strip())
     )
+    # markets encontrados en el contenido (o fallback si es "Otro")
     markets_to_process = sorted(list(all_markets))
+
+    # limitar a los markets conocidos por la plataforma (seguridad)
     platform_markets = set(get_default_markets_for_platform(df_plans, platform_name))
     if platform_markets:
         markets_to_process = sorted(set(markets_to_process) & platform_markets)
 
-    print(f"Mercados a procesar: {markets_to_process}")
+    print(f"Mercados encontrados: {markets_to_process}")
+
+    # === FILTRO POR SELECCIÓN DEL USUARIO (MULTI-SELECT) ===
+    if markets_selected:
+        # normalizamos para comparar sin importar mayúsculas/espacios
+        markets_selected_norm = {m.strip().upper() for m in markets_selected if m.strip()}
+        markets_to_process = [m for m in markets_to_process if m.upper() in markets_selected_norm]
+        print(f"Mercados filtrados por selección del usuario: {markets_to_process}")
+
+    # si después del filtro no quedó nada, detenemos con un mensaje claro
+    if not markets_to_process:
+        print("⚠️ No hay mercados para procesar tras el filtro; se aborta generación.")
+        return output_filename, "Error: no se seleccionaron mercados válidos para esta plataforma/liga."
     final_data_for_excel = {}
 
     def is_market_in_cell(available_markets, target_market):
@@ -603,4 +619,5 @@ def generar_copies(
     print(summary)
     print(f"¡Proceso completado! Archivo guardado en: {output_filename}")
     return output_filename, summary
+
 
