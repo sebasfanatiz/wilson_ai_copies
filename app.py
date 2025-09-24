@@ -199,7 +199,11 @@ def procesar():
     titulo     = request.form['titulo_campaña']
     brief      = request.form['brief_campaña']
     plataforma = request.form.get('plataforma', 'Fanatiz')
-    langs_csv  = request.form.get('langs', 'ES').upper()
+    langs_list = request.form.getlist('langs')  # obtiene lista del <select multiple>
+    if not langs_list:
+        langs_list = ['ES']
+    # normalizamos a ES,EN,PT
+    langs_csv = ",".join([l.strip().upper() for l in langs_list if l.strip()])
     liga       = request.form.get('liga', 'Otro')
     markets    = request.form.getlist('markets')  # <<--- acá
 
@@ -269,6 +273,7 @@ def descargar(filename):
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
+
 
 
 
