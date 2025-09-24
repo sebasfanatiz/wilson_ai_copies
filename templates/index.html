@@ -44,13 +44,32 @@
     select {
       width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box;
       font-size: 1rem; border: 2px solid #FF3200; border-radius: 4px;
-      background-color: #FFFFFF; color: #000000;
+      background-color: rgba(255,255,255,0.1); color: #FFF;
     }
 
-    /* Asegura que los ítems del desplegable sean negros sobre blanco */
-    select option, select optgroup {
-      color: #000000;
+    /* Para selects normales (no-múltiple): cuando se despliega, las opciones van blancas con texto negro */
+    select:not([multiple]) option,
+    select:not([multiple]) optgroup {
       background-color: #FFFFFF;
+      color: #000000;
+    }
+
+    /* Multi-selects (Mercados e Idiomas): apariencia translúcida por defecto … */
+    #markets, #langs {
+      background-color: rgba(255,255,255,0.1);
+      color: #FFFFFF;
+    }
+
+    /* … pero al enfocarlos para elegir (clic/teclado), se vuelven blancos con texto negro para mejor lectura */
+    #markets:focus, #langs:focus {
+      background-color: #FFFFFF;
+      color: #000000;
+    }
+
+    /* Asegura que los ítems dentro del multi-select se lean siempre bien */
+    #markets option, #langs option {
+      background-color: #FFFFFF;
+      color: #000000;
     }
 
     input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.7); }
@@ -274,4 +293,5 @@
   </script>
 </body>
 </html>
+
 
