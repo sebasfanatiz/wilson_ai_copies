@@ -33,11 +33,26 @@
     .header img { max-width: 200px; display: block; margin: 0 auto 10px; }
     h1 { font-size: 2rem; color: #FF3200; margin: 0; }
     label { color: #FFFFFF; font-weight: 700; display: block; margin-top: 1em; }
-    input[type="text"], textarea, select {
+    /* Inputs y textarea siguen oscuros */
+    input[type="text"], textarea {
       width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box;
       font-size: 1rem; border: 2px solid #FF3200; border-radius: 4px;
       background-color: rgba(255,255,255,0.1); color: #FFF;
     }
+
+    /* Selects y sus opciones en modo claro para que el dropdown se lea bien */
+    select {
+      width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box;
+      font-size: 1rem; border: 2px solid #FF3200; border-radius: 4px;
+      background-color: #FFFFFF; color: #000000;
+    }
+
+    /* Asegura que los ítems del desplegable sean negros sobre blanco */
+    select option, select optgroup {
+      color: #000000;
+      background-color: #FFFFFF;
+    }
+
     input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.7); }
     textarea { height: 120px; resize: vertical; }
     button {
@@ -259,3 +274,4 @@
   </script>
 </body>
 </html>
+
