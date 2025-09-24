@@ -465,7 +465,7 @@ def generar_copies(
     platform_name: str = "Fanatiz",
     langs_csv: str = "ES",
     league_selection: str = "Otro",
-    output_filename: str = "copies_generadas.xlsx"
+    output_filename: str = "copies_generadas.xlsx",
     markets_selected: list[str] | None = None
 ) -> tuple:
     """
@@ -619,5 +619,6 @@ def generar_copies(
     print(summary)
     print(f"¡Proceso completado! Archivo guardado en: {output_filename}")
     return output_filename, summary
+
 
 
