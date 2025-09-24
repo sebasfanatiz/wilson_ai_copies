@@ -1,6 +1,6 @@
 # app.py
-# app.py
-from flask import Flask, render_template, request, send_from_directory, redirect, url_for, flash
+from flask import Flask, render_template, request, send_from_directory, redirect, url_for, flash, jsonify
+import pandas as pd
 from datetime import datetime
 import threading, os, re
 try:
@@ -34,9 +34,50 @@ def _load_leagues():
         print(f"Error cargando ligas: {e}")
         return ["Otro"]
 
+def _normalize_headers(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [str(c).strip().lower().replace('\n',' ').replace('  ',' ').replace(' ','_') for c in df.columns]
+    return df
+
+def _norm_base_name(plan_name: str) -> str:
+    if not isinstance(plan_name, str): return ""
+    return plan_name.lower().replace("monthly","").replace("annual","").strip()
+
+def _get_platform_plans_set(df_plans: pd.DataFrame, platform: str):
+    mask = df_plans['platform'].fillna("").str.lower() == platform.lower()
+    dfp = df_plans[mask]
+    base_names = {_norm_base_name(n) for n in dfp['plan_name'].dropna().astype(str)}
+    return base_names
+
+def _any_plan_matches_platform(plans_str, platform_base_names):
+    if not isinstance(plans_str, str): return False
+    listed = [p.strip() for p in plans_str.split(',') if p.strip()]
+    return any(_norm_base_name(p) in platform_base_names for p in listed)
+
+def _load_leagues_by_platform(platform: str):
+    """Devuelve ['Otro', ligas...] filtradas por plataforma en content_by_country.xlsx."""
+    try:
+        path_content = os.path.join(BASE_DIR, "content_by_country.xlsx")
+        path_plans   = os.path.join(BASE_DIR, "plans_and_pricing.xlsx")
+        dfc = _normalize_headers(pd.read_excel(path_content))
+        dfp = _normalize_headers(pd.read_excel(path_plans))
+
+        # columnas mínimas
+        if 'plans_available' not in dfc.columns or 'content_name' not in dfc.columns:
+            return ["Otro"]
+
+        platform_base_names = _get_platform_plans_set(dfp, platform)
+
+        dfc_filt = dfc[dfc['plans_available'].apply(_any_plan_matches_platform, platform_base_names=platform_base_names)]
+        ligas = sorted({str(x).strip() for x in dfc_filt['content_name'].dropna().astype(str) if str(x).strip()})
+        # “Otro” siempre primero
+        return ["Otro"] + ligas
+    except Exception as e:
+        print(f"Error cargando ligas para plataforma '{platform}': {e}")
+        return ["Otro"]
+
 @app.route('/', methods=['GET'])
 def index():
-    # construir lista de archivos (igual que antes)
     archivos_info = []
     if os.path.exists(SALIDAS_DIR):
         for nombre_base in os.listdir(SALIDAS_DIR):
@@ -70,10 +111,17 @@ def index():
 
     archivos_info.sort(key=lambda x: x['timestamp'], reverse=True)
 
-    # preparar selects
     plataformas = ["Fanatiz", "L1MAX", "AFA Play"]
-    ligas = _load_leagues()
+    plataforma_default = plataformas[0]  # Fanatiz
+    ligas = _load_leagues_by_platform(plataforma_default)
+
     return render_template('index.html', archivos=archivos_info, plataformas=plataformas, ligas=ligas)
+
+@app.route('/api/ligas', methods=['GET'])
+def api_ligas():
+    platform = request.args.get('platform', 'Fanatiz')
+    ligas = _load_leagues_by_platform(platform)
+    return jsonify(ligas)
 
 @app.route('/procesar', methods=['POST'])
 def procesar():
@@ -147,5 +195,6 @@ def descargar(filename):
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
+
 
 
