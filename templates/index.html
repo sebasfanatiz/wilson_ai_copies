@@ -54,22 +54,38 @@
       color: #000000;
     }
 
-    /* Multi-selects (Mercados e Idiomas): apariencia translúcida por defecto … */
+    /* Multi-selects (Mercados e Idiomas): caja translúcida SIEMPRE */
     #markets, #langs {
-      background-color: rgba(255,255,255,0.1);
+      width: 100%;
+      padding: 8px;
+      margin-top: 4px;
+      box-sizing: border-box;
+      font-size: 1rem;
+      border: 2px solid #FF3200;
+      border-radius: 4px;
+      background-color: rgba(255,255,255,0.10); /* translúcido, como los inputs */
       color: #FFFFFF;
     }
 
-    /* … pero al enfocarlos para elegir (clic/teclado), se vuelven blancos con texto negro para mejor lectura */
-    #markets:focus, #langs:focus {
-      background-color: #FFFFFF;
-      color: #000000;
+    /* Cada opción hereda la transparencia de la caja */
+    #markets option,
+    #langs option {
+      background-color: transparent; /* NO blanco por defecto */
+      color: #FFFFFF;                /* texto blanco por defecto */
     }
 
-    /* Asegura que los ítems dentro del multi-select se lean siempre bien */
-    #markets option, #langs option {
-      background-color: #FFFFFF;
-      color: #000000;
+    /* Mejor legibilidad al pasar el mouse por una opción */
+    #markets option:hover,
+    #langs option:hover {
+      background-color: #FFFFFF !important;
+      color: #000000 !important;
+    }
+
+    /* Opción seleccionada: leve highlight, pero sin “bloquear” en blanco */
+    #markets option:checked,
+    #langs option:checked {
+      background-color: rgba(255,255,255,0.20) !important;
+      color: #FFFFFF !important;
     }
 
     input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.7); }
@@ -293,5 +309,6 @@
   </script>
 </body>
 </html>
+
 
 
