@@ -149,6 +149,51 @@
       </div>
     {% endif %}
   </div>
+  <script>
+    (function () {
+      const plataformaSel = document.getElementById('plataforma');
+      const ligaSel = document.getElementById('liga');
+
+      async function loadLigasForPlatform(platform) {
+        try {
+          const res = await fetch(`/api/ligas?platform=${encodeURIComponent(platform)}`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const ligas = await res.json(); // array de strings
+          // limpiar opciones
+          ligaSel.innerHTML = '';
+          // recrear opciones (asegurando “Otro” primero si viene)
+          const items = Array.isArray(ligas) ? ligas : ["Otro"];
+          for (const l of items) {
+            const opt = document.createElement('option');
+            opt.value = l;
+            opt.textContent = l;
+            ligaSel.appendChild(opt);
+          }
+        } catch (e) {
+          console.error('No se pudieron cargar las ligas:', e);
+          // fallback
+          ligaSel.innerHTML = '';
+          const opt = document.createElement('option');
+          opt.value = 'Otro';
+          opt.textContent = 'Otro';
+          ligaSel.appendChild(opt);
+        }
+      }
+
+      // on change
+      plataformaSel.addEventListener('change', (e) => {
+        const platform = e.target.value;
+        loadLigasForPlatform(platform);
+      });
+
+    // por si el servidor renderizó ligas de otra plataforma, aseguramos coherencia al cargar
+      document.addEventListener('DOMContentLoaded', () => {
+        const current = plataformaSel.value || 'Fanatiz';
+        loadLigasForPlatform(current);
+      });
+    })();
+  </script>
 </body>
 </html>
+
 
