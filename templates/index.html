@@ -85,6 +85,12 @@
         {% endfor %}
       </select>
 
+      <label for="markets">Mercados</label>
+      <select id="markets" name="markets" multiple size="6" style="width:100%;">
+      <!-- Se llena dinámicamente -->
+      </select>
+      <small>Tip: mantené Ctrl/⌘ para seleccionar varios.</small>
+
       <label for="langs">Idiomas (coma-separado)</label>
       <input type="text" id="langs" name="langs" value="ES" placeholder="ES,EN,PT">
 
@@ -153,40 +159,54 @@
     (function () {
       const plataformaSel = document.getElementById('plataforma');
       const ligaSel = document.getElementById('liga');
+      const marketsSel = document.getElementById('markets');
 
       async function loadLigasForPlatform(platform) {
         try {
           const res = await fetch(`/api/ligas?platform=${encodeURIComponent(platform)}`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const ligas = await res.json(); // array de strings
-          // limpiar opciones
+          const ligas = await res.json();
           ligaSel.innerHTML = '';
-          // recrear opciones (asegurando “Otro” primero si viene)
-          const items = Array.isArray(ligas) ? ligas : ["Otro"];
-          for (const l of items) {
+          (Array.isArray(ligas) ? ligas : ["Otro"]).forEach(l => {
             const opt = document.createElement('option');
-            opt.value = l;
-            opt.textContent = l;
+            opt.value = l; opt.textContent = l;
             ligaSel.appendChild(opt);
-          }
+          });
+          // después de recargar ligas, cargar mercados para la liga seleccionada
+          loadMarkets(platform, ligaSel.value);
         } catch (e) {
           console.error('No se pudieron cargar las ligas:', e);
-          // fallback
-          ligaSel.innerHTML = '';
-          const opt = document.createElement('option');
-          opt.value = 'Otro';
-          opt.textContent = 'Otro';
-          ligaSel.appendChild(opt);
+          ligaSel.innerHTML = '<option value="Otro">Otro</option>';
+          loadMarkets(platform, 'Otro');
         }
       }
 
-      // on change
+      async function loadMarkets(platform, league) {
+        try {
+          const url = `/api/markets?platform=${encodeURIComponent(platform)}&league=${encodeURIComponent(league)}`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const markets = await res.json(); // array de strings
+          marketsSel.innerHTML = '';
+          (Array.isArray(markets) ? markets : []).forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m; opt.textContent = m;
+            marketsSel.appendChild(opt);
+          });
+        } catch (e) {
+          console.error('No se pudieron cargar los mercados:', e);
+          marketsSel.innerHTML = '';
+        }
+      }
+
       plataformaSel.addEventListener('change', (e) => {
-        const platform = e.target.value;
-        loadLigasForPlatform(platform);
+        loadLigasForPlatform(e.target.value);
       });
 
-    // por si el servidor renderizó ligas de otra plataforma, aseguramos coherencia al cargar
+      ligaSel.addEventListener('change', () => {
+        loadMarkets(plataformaSel.value, ligaSel.value);
+      });
+
       document.addEventListener('DOMContentLoaded', () => {
         const current = plataformaSel.value || 'Fanatiz';
         loadLigasForPlatform(current);
@@ -195,5 +215,6 @@
   </script>
 </body>
 </html>
+
 
 
