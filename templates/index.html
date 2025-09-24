@@ -10,11 +10,9 @@
       src: local('Gilroy Bold'), local('Gilroy-Bold');
       font-weight: 700;
     }
-    body {
-      font-family: 'Gilroy', sans-serif; color: #FFFFFF;
-      background: #000 url("{{ url_for('static', filename='arte/fondo.webp') }}") no-repeat center center fixed;
-      background-size: cover; margin: 0; padding: 0; min-height: 100vh;
-    }
+    
+    <body id="page-body" style="background:#000;">
+    
     .container {
       background-color: rgba(38, 25, 59, 0.8); max-width: 800px;
       margin: 40px auto; padding: 20px; border-radius: 8px;
@@ -51,6 +49,12 @@
       color: #fff;
       font-size: 0.9em;
     }
+    .dynamic-bg {
+      background-repeat: no-repeat;
+      background-position: center center;
+      background-attachment: fixed;
+      background-size: cover;
+    }
   </style>
 </head>
 <body>
@@ -66,7 +70,7 @@
 
   <div class="container">
     <div class="header">
-      <img src="{{ url_for('static', filename='arte/logo.png') }}" alt="Fanatiz Logo">
+      <img id="brand-logo" src="{{ url_for('static', filename='arte/logo.png') }}" alt="Logo">
       <h1>Wilson Generador de Copies AI</h1>
     </div>
 
@@ -91,8 +95,13 @@
       </select>
       <small>Tip: mantené Ctrl/⌘ para seleccionar varios.</small>
 
-      <label for="langs">Idiomas (coma-separado)</label>
-      <input type="text" id="langs" name="langs" value="ES" placeholder="ES,EN,PT">
+      <label for="langs">Idiomas</label>
+      <select id="langs" name="langs" multiple size="3" required>
+        <option value="ES" selected>ES (Español)</option>
+        <option value="EN">EN (English)</option>
+        <option value="PT">PT (Português)</option>
+      </select>
+      <small style="color:#ddd">Tip: mantené Ctrl/Cmd para seleccionar varios.</small>
 
       <label for="titulo_campaña">Título de Campaña</label>
       <input type="text" id="titulo_campaña" name="titulo_campaña" value="{{ titulo or '' }}" placeholder="Ingresa el título" required>
@@ -213,8 +222,76 @@
       });
     })();
   </script>
+  <script>
+    (function () {
+      const plataformaSel = document.getElementById('plataforma');
+      const ligaSel = document.getElementById('liga');
+      const bodyEl = document.getElementById('page-body');
+      const logoEl = document.getElementById('brand-logo');
+
+      // Mapea plataforma -> assets
+      const BRAND_ASSETS = {
+        "Fanatiz": {
+          bg: "{{ url_for('static', filename='arte/fondo.webp') }}",
+          logo: "{{ url_for('static', filename='arte/logo.png') }}"
+        },
+        "L1MAX": {
+          bg: "{{ url_for('static', filename='arte/fondo_l1max.webp') }}",
+          logo: "{{ url_for('static', filename='arte/logo_l1max.png') }}"
+        },
+        "AFA Play": {
+          bg: "{{ url_for('static', filename='arte/fondo_afaplay.webp') }}",
+          logo: "{{ url_for('static', filename='arte/logo_afaplay.png') }}"
+        }
+      };
+
+      function updateBranding(platform) {
+        const assets = BRAND_ASSETS[platform] || BRAND_ASSETS["Fanatiz"];
+        bodyEl.classList.add('dynamic-bg');
+        bodyEl.style.backgroundImage = `url('${assets.bg}')`;
+        if (logoEl) logoEl.src = assets.logo;
+      }
+
+      async function loadLigasForPlatform(platform) {
+        try {
+          const res = await fetch(`/api/ligas?platform=${encodeURIComponent(platform)}`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const ligas = await res.json();
+          ligaSel.innerHTML = '';
+          const items = Array.isArray(ligas) ? ligas : ["Otro"];
+          for (const l of items) {
+            const opt = document.createElement('option');
+            opt.value = l;
+            opt.textContent = l;
+            ligaSel.appendChild(opt);
+          }
+        } catch (e) {
+          console.error('No se pudieron cargar las ligas:', e);
+          ligaSel.innerHTML = '';
+          const opt = document.createElement('option');
+          opt.value = 'Otro';
+          opt.textContent = 'Otro';
+          ligaSel.appendChild(opt);
+        }
+      }
+
+      plataformaSel.addEventListener('change', (e) => {
+        const platform = e.target.value;
+        updateBranding(platform);
+        loadLigasForPlatform(platform);
+      });
+
+      // Al cargar: asegurar ligas y branding consistentes con la plataforma por defecto
+      document.addEventListener('DOMContentLoaded', () => {
+        const current = plataformaSel.value || 'Fanatiz';
+        updateBranding(current);
+        loadLigasForPlatform(current);
+      });
+    })();
+  </script>
 </body>
 </html>
+
 
 
 
