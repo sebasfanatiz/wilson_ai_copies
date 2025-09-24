@@ -196,12 +196,12 @@ def api_markets():
 
 @app.route('/procesar', methods=['POST'])
 def procesar():
-    titulo = request.form['titulo_campaña']
-    brief  = request.form['brief_campaña']
+    titulo     = request.form['titulo_campaña']
+    brief      = request.form['brief_campaña']
     plataforma = request.form.get('plataforma', 'Fanatiz')
     langs_csv  = request.form.get('langs', 'ES').upper()
     liga       = request.form.get('liga', 'Otro')
-    markets    = request.form.getlist('markets')
+    markets    = request.form.getlist('markets')  # <<--- acá
 
     safe_title = re.sub(r'[^0-9A-Za-z]+', '_', titulo).strip('_')
     filename        = f"copies_{safe_title}.xlsx"
@@ -220,7 +220,7 @@ def procesar():
                     langs_csv=langs_w,
                     league_selection=liga_w,
                     output_filename=path_out_w,
-                    markets_selected=markets_w
+                    markets_selected=markets_w    # <<--- pasamos al agente
                 )
                 if cost_summary:
                     with open(summary_w, 'w', encoding='utf-8') as f:
@@ -243,6 +243,7 @@ def procesar():
 
     flash(f"¡Proceso para '{filename}' iniciado! Recargá en unos minutos.", "success")
     return redirect(url_for('index'))
+
 
 @app.route('/eliminar/<path:filename>', methods=['POST'])
 def eliminar(filename):
@@ -268,6 +269,7 @@ def descargar(filename):
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
+
 
 
 
