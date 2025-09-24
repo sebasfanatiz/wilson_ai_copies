@@ -76,6 +76,26 @@ def _load_leagues_by_platform(platform: str):
         print(f"Error cargando ligas para plataforma '{platform}': {e}")
         return ["Otro"]
 
+def _split_markets_cell(cell: str):
+    if not isinstance(cell, str): return []
+    return [t.strip() for t in cell.split(',') if t.strip()]
+
+def _get_default_markets_for_platform(platform: str):
+    """Lee plans_and_pricing.xlsx y devuelve lista única de markets para esa plataforma."""
+    try:
+        path_plans = os.path.join(BASE_DIR, "plans_and_pricing.xlsx")
+        df = _normalize_headers(pd.read_excel(path_plans))
+        mask = df['platform'].fillna("").str.lower() == platform.lower()
+        dfp = df[mask]
+        markets = set()
+        for mcell in dfp.get('markets', pd.Series(dtype=str)).dropna().astype(str):
+            markets.update(_split_markets_cell(mcell))
+        return sorted(markets) if markets else ['US/CA','EUROPE','ROW']
+    except Exception as e:
+        print(f"Error obteniendo markets para plataforma '{platform}': {e}")
+        return ['US/CA','EUROPE','ROW']
+
+
 @app.route('/', methods=['GET'])
 def index():
     archivos_info = []
@@ -123,6 +143,57 @@ def api_ligas():
     ligas = _load_leagues_by_platform(platform)
     return jsonify(ligas)
 
+@app.route('/api/markets', methods=['GET'])
+def api_markets():
+    platform = request.args.get('platform', 'Fanatiz')
+    league   = request.args.get('league', 'Otro')
+
+    try:
+        # Si la liga es "Otro" => fallback: todos los mercados de la plataforma
+        if league.strip().lower() == 'otro':
+            return jsonify(_get_default_markets_for_platform(platform))
+
+        # Si hay liga: filtrar content_by_country por plataforma y liga, y colectar sus markets
+        path_content = os.path.join(BASE_DIR, "content_by_country.xlsx")
+        path_plans   = os.path.join(BASE_DIR, "plans_and_pricing.xlsx")
+        dfc = _normalize_headers(pd.read_excel(path_content))
+        dfp = _normalize_headers(pd.read_excel(path_plans))
+
+        if 'plans_available' not in dfc.columns or 'content_name' not in dfc.columns or 'markets_available' not in dfc.columns:
+            return jsonify([])
+
+        # filtrar por plataforma (reutilizamos la lógica de planes base)
+        def _norm_base_name(plan_name: str):
+            if not isinstance(plan_name, str): return ""
+            return plan_name.lower().replace("monthly","").replace("annual","").strip()
+
+        def _get_platform_plans_set(df_plans: pd.DataFrame, platform: str):
+            mask = df_plans['platform'].fillna("").str.lower() == platform.lower()
+            dfp2 = df_plans[mask]
+            return {_norm_base_name(n) for n in dfp2['plan_name'].dropna().astype(str)}
+
+        def _any_plan_matches_platform(plans_str, platform_base_names):
+            if not isinstance(plans_str, str): return False
+            listed = [p.strip() for p in plans_str.split(',') if p.strip()]
+            return any(_norm_base_name(p) in platform_base_names for p in listed)
+
+        platform_base_names = _get_platform_plans_set(dfp, platform)
+        dfc_plat = dfc[dfc['plans_available'].apply(_any_plan_matches_platform, platform_base_names=platform_base_names)]
+        dfc_plat_league = dfc_plat[dfc_plat['content_name'].fillna("").astype(str).str.lower() == league.lower()]
+
+        markets = set()
+        for mcell in dfc_plat_league.get('markets_available', pd.Series(dtype=str)).dropna().astype(str):
+            markets.update(_split_markets_cell(mcell))
+
+        if not markets:
+            # si no hay markets específicos, caemos al fallback de plataforma
+            markets = set(_get_default_markets_for_platform(platform))
+
+        return jsonify(sorted(markets))
+    except Exception as e:
+        print(f"Error /api/markets: {e}")
+        return jsonify([])
+
 @app.route('/procesar', methods=['POST'])
 def procesar():
     titulo = request.form['titulo_campaña']
@@ -130,6 +201,7 @@ def procesar():
     plataforma = request.form.get('plataforma', 'Fanatiz')
     langs_csv  = request.form.get('langs', 'ES').upper()
     liga       = request.form.get('liga', 'Otro')
+    markets    = request.form.getlist('markets')
 
     safe_title = re.sub(r'[^0-9A-Za-z]+', '_', titulo).strip('_')
     filename        = f"copies_{safe_title}.xlsx"
@@ -148,6 +220,7 @@ def procesar():
                     langs_csv=langs_w,
                     league_selection=liga_w,
                     output_filename=path_out_w
+                    markets_selected=markets_w
                 )
                 if cost_summary:
                     with open(summary_w, 'w', encoding='utf-8') as f:
@@ -195,6 +268,7 @@ def descargar(filename):
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
+
 
 
 
