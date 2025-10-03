@@ -594,7 +594,7 @@ def generar_copies(
             'extras': f'Plataforma objetivo: {platform_name}'
         }
 
-        prompt = generar_prompt_multi(briefs, df_refs, content_info, plan_info, df_specs, , base_lang='es')
+        prompt = generar_prompt_multi(briefs, df_refs, content_info, plan_info, df_specs, base_lang='es')
         resp = chat_create(model=MODEL_CHAT, messages=[{'role':'system','content':'You are a helpful assistant.'},{'role':'user','content':prompt}])
         total_usage["prompt_tokens"] += resp.usage.prompt_tokens
         total_usage["completion_tokens"] += resp.usage.completion_tokens
@@ -620,7 +620,7 @@ def generar_copies(
 
     summary = (
         f"🧾 **Campaña:** {campaign_name}\n"
-        f"📝 **Brief utilizado:**\n{brief_preview}\n\n"
+        f"📝 **Brief utilizado:**\n{campaign_brief}\n\n"
         f"📊 **Resumen de Consumo y Costo** 💰\n"
         f"-----------------------------------------\n"
         f"Modelo Utilizado: {MODEL_CHAT}\n"
@@ -635,6 +635,7 @@ def generar_copies(
     print(summary)
     print(f"¡Proceso completado! Archivo guardado en: {output_filename}")
     return output_filename, summary
+
 
 
 
