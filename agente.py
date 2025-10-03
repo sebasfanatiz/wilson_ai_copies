@@ -513,62 +513,6 @@ Reglas Fundamentales:
 """.strip()
     return prompt
 
-# ---------- Excel ----------
-def _normalize_copy(s: str) -> str:
-    """Normaliza para detectar duplicados (lower, sin espacios extra)."""
-    return re.sub(r'\s+', ' ', (s or '').strip().lower())
-
-def _synthesize_more_variants(seed_texts, need, field, limit, lang='es'):
-    """
-    Genera 'need' variantes NUEVAS en el idioma dado, basadas en los seeds.
-    No usa brief: se apoya en reformulación creativa controlada.
-    """
-    seed_clean = [t.strip() for t in seed_texts if isinstance(t, str) and t.strip()]
-    if need <= 0:
-        return []
-
-    # Campo legible para prompt
-    field_nice = {
-        "headlines": "titulares",
-        "long_headlines": "titulares largos",
-        "short_description": "descripciones cortas",
-        "long_descriptions": "descripciones largas",
-        "primary_texts": "textos principales"
-    }.get(field, field)
-
-    # Instrucciones en el idioma target
-    if lang == 'en':
-        sys_msg = "You are a senior ad copywriter. Always write in natural English."
-        instr = (f"Create {need} NEW {field_nice} for sports streaming ads. "
-                 f"Each must be UNDER {limit} characters. Avoid repeating wording and ideas from these examples:\n"
-                 + "\n".join(f"- {s}" for s in seed_clean) +
-                 "\nReturn ONLY the {need} lines, one per line, no numbering, no quotes.")
-    elif lang == 'pt':
-        sys_msg = "Você é um redator sênior de anúncios. Escreva sempre em português brasileiro natural."
-        instr = (f"Crie {need} NOVAS {field_nice} para anúncios de streaming de esportes. "
-                 f"Cada uma deve ter MENOS de {limit} caracteres. Evite repetir termos e ideias destes exemplos:\n"
-                 + "\n".join(f"- {s}" for s in seed_clean) +
-                 "\nDevolva APENAS as {need} linhas, uma por linha, sem numeração, sem aspas.")
-    else:
-        sys_msg = "Eres un redactor senior de anuncios. Escribe SIEMPRE en español natural."
-        instr = (f"Crea {need} {field_nice} NUEVOS para anuncios de streaming deportivo. "
-                 f"Cada uno debe tener MENOS de {limit} caracteres. Evita repetir palabras e ideas de estos ejemplos:\n"
-                 + "\n".join(f"- {s}" for s in seed_clean) +
-                 "\nDevuelve SÓLO las {need} líneas, una por línea, sin numeración ni comillas.")
-
-    try:
-        resp = chat_create(
-            model=MODEL_CHAT,
-            messages=[{"role":"system","content":sys_msg},
-                      {"role":"user","content":instr}]
-        )
-        lines = [l.strip() for l in resp.choices[0].message.content.splitlines() if l.strip()]
-        return lines[:need] if len(lines) >= need else lines
-    except Exception as e:
-        print(f"[topup] ERROR generando variantes: {e}")
-        return []
-
-
 def generar_excel_multi(data, output_langs=("es",), filename="copies.xlsx", *,brief_context: str = "", company: str = "", market_content_names: dict[str, str] | None = None, campaign_name: str = "",):
     rows, all_tasks = [], []
     total_usage = {"prompt_tokens":0,"completion_tokens":0}
@@ -905,6 +849,7 @@ def generar_copies(
     print(summary)
     print(f"¡Proceso completado! Archivo guardado en: {output_filename}")
     return output_filename, summary
+
 
 
 
