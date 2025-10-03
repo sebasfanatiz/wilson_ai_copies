@@ -1,6 +1,7 @@
 # agente.py
 import os, re, json, time, random, sys
 import pandas as pd
+import unicodedata
 from openai import OpenAI
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
@@ -48,6 +49,150 @@ def _normalize_headers(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip().lower().replace('\n',' ').replace('  ',' ').replace(' ','_') for c in df.columns]
     return df
+
+def _normalize_copy(s: str) -> str:
+    """Normaliza para deduplicar: minúsculas, sin acentos, sin dobles espacios."""
+    s = (s or "").strip().lower()
+    s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+def _ensure_meta_primary_style(text: str, limit: int) -> str:
+    """
+    Si el texto NO está en formato bullets/emojis, lo convierte.
+    Reglas: 3–6 bullets, cada línea comienza con un emoji, separadas por '\n', <= limit.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return text
+    # ¿ya tiene bullets/emojis al inicio de línea?
+    if re.search(r"(^|\n)\s*[\u2600-\u27BF\uFE0F\U0001F300-\U0001FAFF]", text):
+        return text[:limit]
+
+    # Crear bullets desde frases
+    emojis = ["⚽", "🔥", "🏆", "⏱️", "📺", "🌎", "💥", "🎯","🎁","🤩","🎉","🎬","✨","⭐️","🤝","😉"]
+    # Cortar por puntuación fuerte
+    chunks = [c.strip() for c in re.split(r"[.!?;·•\n]+", text) if c.strip()]
+    if not chunks:
+        chunks = [text.strip()]
+
+    bullets = []
+    for i, ch in enumerate(chunks[:6]):  # máx 6 bullets
+        bullet = f"{emojis[i % len(emojis)]} {ch}"
+        bullets.append(bullet)
+
+    # Al menos 3 bullets
+    if len(bullets) < 3 and chunks:
+        while len(bullets) < 3:
+            bullets.append(f"{emojis[len(bullets) % len(emojis)]} {chunks[0]}")
+
+    out = "\n".join(bullets)
+    # Asegurar límite
+    if len(out) > limit:
+        # recortar líneas hasta entrar en límite
+        lines = []
+        for b in bullets:
+            if len("\n".join(lines + [b])) <= limit:
+                lines.append(b)
+            else:
+                # intentar una versión recortada
+                short = b[: max(0, limit - len("\n".join(lines)) - 1)]
+                if short:
+                    lines.append(short)
+                break
+        out = "\n".join(lines)
+
+    return out[:limit]
+
+def _synthesize_more_variants(
+    base_texts: list[str],
+    missing: int,
+    field: str,
+    limit: int,
+    *,
+    brief: str,
+    company: str,
+    market: str,
+    campaign: str,
+    content_name: str,
+    lang: str = "es",
+) -> list[str]:
+    """
+    Pide a la IA variantes NUEVAS guiadas por brief/mercado/contenido.
+    Devuelve exactamente 'missing' piezas en JSON.
+    """
+    if missing <= 0:
+        return []
+
+    # Contexto semilla para evitar “genéricos”
+    seed = "\n".join(f"- {t}" for t in base_texts if isinstance(t, str) and t.strip())
+    style_rules = []
+    if campaign in ("MetaDemandGen", "MetaDemandCapture") and field == "primary_texts":
+        style_rules.append(
+            "Formatea como 3–6 bullets con salto de línea; cada línea debe comenzar con un emoji; tono enérgico; 180–250 caracteres totales si el límite lo permite."
+        )
+    else:
+        style_rules.append("Frases claras, sin emojis obligatorios; tono directo y orientado a conversión.")
+
+    sys = "Eres un redactor senior de performance marketing que escribe en español neutro para LATAM/US Hispanohablante."
+    user = f"""
+Empresa: {company}
+Campaña: {campaign}
+Contenido/Liga: {content_name}
+Mercado objetivo: {market}
+Brief de campaña: {brief}
+
+Tu tarea:
+- Genera EXACTAMENTE {missing} variantes nuevas para el campo '{field}'.
+- Longitud máxima por variante: {limit} caracteres.
+- Escríbelas 100% en {('Español' if lang=='es' else lang)}.
+- Evita repetir ideas/estructuras de estas semillas existentes (si las hay):
+{seed or '(sin semillas)'}
+
+Reglas de estilo:
+- {style_rules[0]}
+- NO inventes precios o beneficios inexistentes; usa claims genéricos si no hay datos.
+- Evita comillas iniciales/finales.
+- Nada de “Texto 1: …” ni numeraciones explícitas.
+- Devuelve SOLO un JSON con la clave "variants" como array de strings.
+"""
+    try:
+        resp = chat_create(
+            model=MODEL_CHAT,
+            response_format={"type": "json_object"},
+            messages=[{"role": "system", "content": sys}, {"role": "user", "content": user}],
+            temperature=0.9,
+        )
+        raw = resp.choices[0].message.content
+        data = json.loads(raw)
+        variants = [v for v in data.get("variants", []) if isinstance(v, str)]
+    except Exception as e:
+        print(f"[synthesize] fallback por error: {e}")
+        variants = []
+
+    # Sanitizar, recortar y dedup local
+    clean = []
+    seen = set()
+    for v in variants:
+        vv = v.strip()
+        if not vv:
+            continue
+        vv = vv[:limit]
+        k = _normalize_copy(vv)
+        if k not in seen:
+            seen.add(k)
+            clean.append(vv)
+
+    # Si quedó corto, rellena mínimamente respetando límite y estilo
+    while len(clean) < missing:
+        base = (seed or content_name or "Vive el fútbol en vivo")[:limit]
+        alt = base if len(base) <= limit else base[:limit]
+        k = _normalize_copy(alt)
+        if k not in seen:
+            seen.add(k); clean.append(alt)
+        else:
+            clean.append(alt[:limit])
+
+    return clean[:missing]
 
 def _ensure_columns(df: pd.DataFrame, required_cols: list, df_name: str = "DataFrame"):
     missing = [c for c in required_cols if c not in df.columns]
@@ -424,7 +569,7 @@ def _synthesize_more_variants(seed_texts, need, field, limit, lang='es'):
         return []
 
 
-def generar_excel_multi(data, output_langs=("es",), filename="copies.xlsx"):
+def generar_excel_multi(data, output_langs=("es",), filename="copies.xlsx", *,brief_context: str = "", company: str = "", market_content_names: dict[str, str] | None = None, campaign_name: str = "",):
     rows, all_tasks = [], []
     total_usage = {"prompt_tokens":0,"completion_tokens":0}
 
@@ -452,8 +597,7 @@ def generar_excel_multi(data, output_langs=("es",), filename="copies.xlsx"):
                     u = usage if isinstance(usage, dict) else usage.dict()
                     total_usage["prompt_tokens"]  += u.get('prompt_tokens',0)
                     total_usage["completion_tokens"] += u.get('completion_tokens',0)
-                # === Top-up: asegurar EXACTAMENTE 'count' textos no vacíos ===
-                    # 1) filtramos vacíos y deduplicamos
+                # ===== TOP-UP INTELIGENTE (brief + mercado + contenido) =====
                 dedup = []
                 seen = set()
                 for t in es_texts:
@@ -467,16 +611,26 @@ def generar_excel_multi(data, output_langs=("es",), filename="copies.xlsx"):
                         seen.add(norm)
                         dedup.append(tt)
 
-                # 2) si faltan, sintetizamos nuevas variantes en ES
                 missing = count - len(dedup)
                 if missing > 0:
-                    extras = _synthesize_more_variants(dedup, missing, field, limit, lang='es')
-                    # asegurar límites y estilo
-                    extras_fixed, _ = preparar_batch(extras, limit, field, lang='es')
-                    # agregar sin duplicar
-                    for e in extras_fixed:
-                        ne = e.strip()
-                        if not ne:
+                    # contexto por mercado
+                    content_name_ctx = ""
+                    if isinstance(market_content_names, dict):
+                        content_name_ctx = market_content_names.get(market, "") or ""
+
+                    extras = _synthesize_more_variants(
+                        dedup, missing, field, limit,
+                        brief=brief_context,
+                        company=company or "Marca",
+                        market=market,
+                        campaign=campaign_name,
+                        content_name=content_name_ctx,
+                        lang='es',
+                    )
+                    # normalizar + dedup
+                    for e in extras:
+                        ne = (e or "").strip()
+                        if not ne: 
                             continue
                         nkey = _normalize_copy(ne)
                         if nkey not in seen:
@@ -485,25 +639,30 @@ def generar_excel_multi(data, output_langs=("es",), filename="copies.xlsx"):
                         if len(dedup) >= count:
                             break
 
-                # 3) si aún faltan (por seguridad), rellenar con pequeñas variaciones de las primeras
+                # Si todavía falta, duplicá con variantes mínimas (pero no genéricas absurdas)
                 while len(dedup) < count and dedup:
                     base = dedup[len(dedup) % len(dedup)]
-                    # micro-variación segura (agregar/remover emoji/¡!)
+                    # pequeño tweak: agrega o quita un signo para variar sin romper significado
                     variant = re.sub(r'[!¡]+$', '', base).strip()
                     if variant == base:
-                        variant = base + "!"
+                        variant = (base + " ¡No te lo pierdas!")[:limit]
                     if _normalize_copy(variant) not in seen and len(variant) <= limit:
                         seen.add(_normalize_copy(variant))
                         dedup.append(variant)
                     else:
-                        dedup.append(base[:limit])  # última red
+                        dedup.append(base[:limit])
 
-                # 4) si no había nada de nada, meter placeholders neutros
                 if not dedup:
-                    dedup = [f"Descubrí tu pasión en vivo"[:limit] for _ in range(count)]
+                    # fallback último recurso (pero lo evitamos en la práctica)
+                    dedup = [f"Viví la emoción en vivo"[:limit] for _ in range(count)]
 
-                # reemplazar es_texts por la lista completa y exacta
+                # En Meta/primary_texts: asegurar bullets + emojis
+                if campaign in ("MetaDemandGen", "MetaDemandCapture") and field == "primary_texts":
+                    dedup = [_ensure_meta_primary_style(x, limit) for x in dedup]
+
                 es_texts = dedup[:count]
+                # ===== TOP-UP (fin) =====
+
 
                 all_tasks.append({"market":market,"platform":plat,"tipo":tp,"campo":field,"count":count,"limit":limit,"es_texts":es_texts})
 
@@ -656,15 +815,18 @@ def generar_copies(
         return output_filename, "Error: no se seleccionaron mercados válidos para esta plataforma/liga."
     final_data_for_excel = {}
 
+    market_to_content_names = {}
+
     def is_market_in_cell(available_markets, target_market):
         if not isinstance(available_markets, str): return False
         market_list = [m.strip().lower() for m in available_markets.split(',')]
         return target_market.lower() in market_list
-
+    
     for market in markets_to_process:
         print("\n" + "="*20 + f" PROCESANDO {market} " + "="*20)
         market_content_df = relevant_content_df[relevant_content_df['markets_available'].str.contains(market, na=False)]
         content_names = ", ".join(market_content_df['content_name'].unique())
+        market_to_content_names[market] = content_names
         plans_available = set()
         market_content_df['plans_available'].dropna().str.split(',').apply(lambda lst: plans_available.update(p.strip() for p in lst if p.strip()))
         # quedarse con planes de la plataforma
@@ -716,7 +878,7 @@ def generar_copies(
     if not final_data_for_excel:
         return output_filename, "Error: no se generaron copies válidos."
 
-    excel_usage = generar_excel_multi(final_data_for_excel, output_langs=_parse_langs(langs_csv), filename=output_filename)
+    excel_usage = generar_excel_multi(final_data_for_excel, output_langs=_parse_langs(langs_csv), filename=output_filename, brief_context=campaign_brief, company=COMPANY_BY_PLATFORM.get(platform_name, platform_name), market_content_names=market_to_content_names, campaign_name=campaign_name,)
     total_usage["prompt_tokens"] += excel_usage["prompt_tokens"]
     total_usage["completion_tokens"] += excel_usage["completion_tokens"]
 
@@ -743,6 +905,7 @@ def generar_copies(
     print(summary)
     print(f"¡Proceso completado! Archivo guardado en: {output_filename}")
     return output_filename, summary
+
 
 
 
