@@ -91,6 +91,12 @@ def get_default_markets_for_platform(df_plans: pd.DataFrame, platform: str) -> l
         return ['US/CA','EUROPE','ROW']
     return sorted(markets_set)
 
+def _seems_english(txt: str) -> bool:
+    if not isinstance(txt, str): return False
+    t = txt.lower()
+    common = (" the ", " to ", " and ", " for ", " with ", " your ", " watch ")
+    return sum(tok in f" {t} " for tok in common) >= 2
+
 # ---------- IA ----------
 def chat_create(messages, model=None, max_retries=3, timeout=300, **kwargs):
     model = model or MODEL_CHAT
@@ -266,10 +272,11 @@ NO abrevies ni uses '...'. Devuelve SOLO un objeto JSON con "translations".
         return texts, {"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}
 
 # ---------- prompt ----------
-def generar_prompt_multi(briefs, ref_df, content_info, plan_info, specs_df):
+def generar_prompt_multi(briefs, ref_df, content_info, plan_info, specs_df, base_lang='es'):
     # muestreo con >=2 primary_texts
     campo_col = 'campo' if 'campo' in ref_df.columns else ('Campo' if 'Campo' in ref_df.columns else None)
     N_EXAMPLES = min(5, len(ref_df))
+    base_lang_up = base_lang.upper()
     if campo_col:
         df_primary = ref_df[ref_df[campo_col].astype(str).str.lower() == 'primary_texts']
         take_primary = min(2, len(df_primary), N_EXAMPLES)
@@ -296,7 +303,7 @@ def generar_prompt_multi(briefs, ref_df, content_info, plan_info, specs_df):
 
     info = [f"Contenido: {content_info['content_name']}"]
     if content_info['details']: info.append(f"Detalles: {content_info['details']}")
-    info.append(f"Idiomas: {', '.join(content_info['languages'])}")
+    info.append(f"Idioma base de redacción: {base_lang_up}")
     info.append("Planes y precios disponibles (USA EL SÍMBOLO DE MONEDA EXACTO QUE SE MUESTRA):")
     for m, pls in plan_info.items():
         plan_descriptions = []
@@ -357,6 +364,7 @@ Reglas Fundamentales:
 - Plan anual: mencionar el descuento si existe.
 - Moneda: usar EXACTAMENTE el símbolo indicado en 'Planes y precios'.
 - Para "primary_texts": genera textos entre {MIN_CHARS_BY_FIELD.get('primary_texts',0)} y el máximo permitido del campo.
+- **Idioma base**: escribe TODOS los textos **exclusivamente en Español (ES)**, sin mezclar ni alternar con otros idiomas. **No incluyas traducciones ni frases en EN/PT**; las traducciones se harán en una fase posterior.
 """.strip()
     return prompt
 
@@ -380,6 +388,12 @@ def generar_excel_multi(data, output_langs=("es",), filename="copies.xlsx"):
                     usage = {"prompt_tokens":0,"completion_tokens":0}
                 else:
                     es_texts, usage = preparar_batch(original_texts, limit, field, lang='es')
+                    if any(_seems_english(t) for t in es_texts):
+                        # Reforzar que estén en ES reescribiendo (sin traducir; solo “parafraseo” en ES)
+                        es_texts, usage_fix = preparar_batch(es_texts, limit, field, lang='es')
+                        ufix = usage_fix if isinstance(usage_fix, dict) else usage_fix.dict()
+                        total_usage["prompt_tokens"]  += ufix.get('prompt_tokens',0)
+                        total_usage["completion_tokens"] += ufix.get('completion_tokens',0)
                     u = usage if isinstance(usage, dict) else usage.dict()
                     total_usage["prompt_tokens"]  += u.get('prompt_tokens',0)
                     total_usage["completion_tokens"] += u.get('completion_tokens',0)
@@ -551,7 +565,7 @@ def generar_copies(
             print(f"  ⚠️ No quedaron planes válidos para la plataforma '{platform_name}' en '{market}'.")
             continue
 
-        content_info = {"content_name": content_names, "languages": [l.upper() for l in OUTPUT_LANGS], "details": "", "markets": [market]}
+        content_info = {"content_name": content_names, "languages": ["ES"], "details": "", "markets": [market]}
 
         plan_info = {}
         matches = []
@@ -580,7 +594,7 @@ def generar_copies(
             'extras': f'Plataforma objetivo: {platform_name}'
         }
 
-        prompt = generar_prompt_multi(briefs, df_refs, content_info, plan_info, df_specs)
+        prompt = generar_prompt_multi(briefs, df_refs, content_info, plan_info, df_specs, , base_lang='es')
         resp = chat_create(model=MODEL_CHAT, messages=[{'role':'system','content':'You are a helpful assistant.'},{'role':'user','content':prompt}])
         total_usage["prompt_tokens"] += resp.usage.prompt_tokens
         total_usage["completion_tokens"] += resp.usage.completion_tokens
@@ -605,6 +619,8 @@ def generar_copies(
     total_cost  = input_cost + output_cost
 
     summary = (
+        f"🧾 **Campaña:** {campaign_name}\n"
+        f"📝 **Brief utilizado:**\n{brief_preview}\n\n"
         f"📊 **Resumen de Consumo y Costo** 💰\n"
         f"-----------------------------------------\n"
         f"Modelo Utilizado: {MODEL_CHAT}\n"
@@ -619,6 +635,7 @@ def generar_copies(
     print(summary)
     print(f"¡Proceso completado! Archivo guardado en: {output_filename}")
     return output_filename, summary
+
 
 
 
