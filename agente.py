@@ -1,15 +1,28 @@
 # agente.py
-import os, re, json, time, random, sys
+
+# ==============================================================================
+# 1. IMPORTACIONES
+# ==============================================================================
+import os
+import re
+import json
+import time
+import random
+import sys
 import pandas as pd
-import unicodedata
 from openai import OpenAI
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 
-# --------- CONFIG GLOBAL ----------
-MODEL_CHAT = "gpt-5-mini"  # mantener consistente con tu script final
+
+# ==============================================================================
+# 2. CONFIGURACIÓN GLOBAL Y CONSTANTES
+# ==============================================================================
+# --- Configuración del Modelo y Cliente de OpenAI ---
+MODEL_CHAT = "gpt-5-mini"
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# --- Estructura y Reglas de las Campañas ---
 CAMPAIGNS_STRUCTURE = {
     "SEM": {"headlines": (15, 30), "long_headlines": (5, 90), "short_description": (1, 60), "long_descriptions": (4, 90)},
     "MetaDemandGen": {"primary_texts": (4, 250), "headlines": (3, 30), "descriptions": (3, 30)},
@@ -18,8 +31,11 @@ CAMPAIGNS_STRUCTURE = {
     "GooglePMAX": {"headlines": (15, 30), "long_headlines": (5, 90), "short_description": (1, 60), "long_descriptions": (4, 90)}
 }
 
-MIN_CHARS_BY_FIELD = {"primary_texts": 200}
+MIN_CHARS_BY_FIELD = {
+    "primary_texts": 200
+}
 
+# --- Mapeos y Datos por Defecto ---
 DEFAULT_PLANS_BY_PLATFORM = {
     "Fanatiz": ["Front Row Monthly", "Front Row Annual"],
     "L1MAX": ["L1MAX Full", "L1MAX Móvil"],
@@ -32,248 +48,65 @@ COMPANY_BY_PLATFORM = {
     "AFA Play": "AFA Play",
 }
 
-def _parse_langs(s: str):
+
+# ==============================================================================
+# 3. FUNCIONES DE UTILIDAD (CARGA Y PREPROCESAMIENTO DE DATOS)
+# ==============================================================================
+# --- Carga de Archivos ---
+def cargar_referencias(path): return pd.read_excel(path, sheet_name="Copies")
+def cargar_contenidos(path):  return pd.read_excel(path)
+def cargar_planes(path):      return pd.read_excel(path)
+def cargar_specs(path):       return pd.read_excel(path)
+
+# --- Normalización y Validación ---
+def _normalize_headers(df: pd.DataFrame) -> pd.DataFrame:
+    """ Limpia y estandariza los encabezados de un DataFrame. """
+    df = df.copy()
+    df.columns = [str(c).strip().lower().replace('\n',' ').replace('  ',' ').replace(' ','_') for c in df.columns]
+    return df
+
+def _ensure_columns(df: pd.DataFrame, required_cols: list, df_name: str = "DataFrame"):
+    """ Verifica que un DataFrame contenga las columnas requeridas. """
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise KeyError(f"{df_name} no contiene las columnas requeridas: {missing}. Columns disponibles: {list(df.columns)}")
+
+# --- Procesamiento de Cadenas de Texto ---
+def _parse_langs(s: str) -> tuple:
+    """ Parsea una cadena de idiomas separados por coma a una tupla ordenada. """
     m = {"es","en","pt"}
     if not s: return ("es",)
     items = [t.strip().lower() for t in s.split(",") if t.strip()]
     items = [t for t in items if t in m]
     return tuple(sorted(set(items), key=items.index)) or ("es",)
 
-# ---------- util / carga ----------
-def cargar_referencias(path): return pd.read_excel(path, sheet_name="Copies")
-def cargar_contenidos(path):  return pd.read_excel(path)
-def cargar_planes(path):      return pd.read_excel(path)
-def cargar_specs(path):       return pd.read_excel(path)
-
-def cut_safe(s: str, limit: int) -> str:
-    """Recorta en borde de palabra; si no hay espacios, corta completo.
-    Limpia colas raras y evita dejar conectores sueltos."""
-    s = (s or "").strip()
-    if len(s) <= limit:
-        return s
-    cut = s[:limit]
-    # preferir último espacio
-    sp = cut.rfind(" ")
-    if sp >= max(15, int(limit*0.4)):  # evita cortar demasiado
-        cut = cut[:sp]
-    cut = re.sub(r"[\s\-:•,.;…]+$", "", cut)
-    return cut
-
-def enforce_limit_all(texts: list[str], limit: int) -> list[str]:
-    out = []
-    for t in texts:
-        t = (t or "").strip()
-        if not t:
-            out.append("")
-            continue
-        out.append(cut_safe(t, limit))
-    return out
-
-def _normalize_headers(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [str(c).strip().lower().replace('\n',' ').replace('  ',' ').replace(' ','_') for c in df.columns]
-    return df
-
-def _normalize_copy(s: str) -> str:
-    """Normaliza para deduplicar: minúsculas, sin acentos, sin dobles espacios."""
-    s = (s or "").strip().lower()
-    s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
-    s = re.sub(r"\s+", " ", s)
-    return s
-
-def _trim_to_word_boundary(s: str, max_len: int) -> str:
-    """Recorta en borde de palabra y limpia colas raras."""
-    s = (s or "").strip()
-    if len(s) <= max_len:
-        return s
-    cut = s[:max_len]
-    # buscar el último espacio antes de max_len
-    sp = cut.rfind(" ")
-    if sp > 0:
-        cut = cut[:sp]
-    # limpiar signos/colas incompletas
-    cut = re.sub(r"[\s\-:•,.;…]+$", "", cut)
-    return cut
-
-def _valid_bullet(body: str) -> bool:
-    """Descarta bullets huérfanos o demasiado cortos."""
-    if not body:
-        return False
-    # al menos 8 caracteres “reales”
-    if len(body) < 8:
-        return False
-    # que no sea sólo un conector o una palabra suelta
-    if re.fullmatch(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+", body) and len(body) < 10:
-        return False
-    return True
-
-def build_meta_bullets(seed_text: str, limit: int, min_bullets=3, max_bullets=5) -> str:
-    """
-    Construye bullets con emojis desde oraciones completas.
-    Nunca corta palabras. Si no hay suficientes oraciones, sintetiza fillers seguros.
-    """
-    emojis = ["⚽","🔥","🏆","⏱️","📺","🌎","💥","🎯","🎁","🤩","🎉","🎬","✨","⭐️","🤝","😉"]
-    # separar por oraciones
-    chunks = [c.strip() for c in re.split(r"[.!?;\n]+", (seed_text or "")) if c.strip()]
-    if not chunks:
-        chunks = ["Vive la LVBP en vivo y legal", "Repeticiones y on demand", "Suscríbete en minutos"]
-
-    # normalizar y acotar cada oración a 80-90 car para dejar espacio total
-    per_line_cap = min(90, max(60, limit // max(min_bullets, 3)))
-    lines = []
-    for i, ch in enumerate(chunks[:max_bullets*2]):  # algo de margen
-        body = cut_safe(ch, per_line_cap)
-        if len(body) < 8:
-            continue
-        lines.append(f"{emojis[i % len(emojis)]} {body}")
-
-    # asegurar mínimo
-    fillers = [
-        "Transmisión en vivo y on demand",
-        "Repeticiones, resúmenes y jugadas clave",
-        "Sigue a tus equipos desde cualquier dispositivo"
-    ]
-    fi = 0
-    while len(lines) < min_bullets and fi < len(fillers):
-        body = cut_safe(fillers[fi], per_line_cap)
-        lines.append(f"{emojis[len(lines) % len(emojis)]} {body}")
-        fi += 1
-
-    # empaquetar sin exceder el límite total
-    packed = []
-    budget = limit
-    for ln in lines:
-        extra = 0 if not packed else 1  # salto de línea
-        if len(ln) + extra <= budget:
-            if packed:
-                budget -= 1
-            packed.append(ln)
-            budget -= len(ln)
-        if len(packed) >= max_bullets:
-            break
-
-    # si aún no llegamos al mínimo pero no hay budget, reducimos per_line_cap y reintentamos rápido
-    if len(packed) < min_bullets:
-        per_line_cap = max(40, per_line_cap - 10)
-        packed = []
-        budget = limit
-        for i, ch in enumerate(chunks[:max_bullets*2]):
-            body = cut_safe(ch, per_line_cap)
-            if len(body) < 8:
-                continue
-            ln = f"{emojis[i % len(emojis)]} {body}"
-            extra = 0 if not packed else 1
-            if len(ln) + extra <= budget:
-                if packed:
-                    budget -= 1
-                packed.append(ln)
-                budget -= len(ln)
-            if len(packed) >= min_bullets:
-                break
-
-    return "\n".join(packed)
-
-def _synthesize_more_variants(
-    base_texts: list[str],
-    missing: int,
-    field: str,
-    limit: int,
-    *,
-    brief: str,
-    company: str,
-    market: str,
-    campaign: str,
-    content_name: str,
-    lang: str = "es",
-) -> list[str]:
-    """
-    Pide a la IA variantes NUEVAS guiadas por brief/mercado/contenido.
-    Devuelve exactamente 'missing' piezas en JSON.
-    """
-    if missing <= 0:
-        return []
-
-    # Contexto semilla para evitar “genéricos”
-    seed = "\n".join(f"- {t}" for t in base_texts if isinstance(t, str) and t.strip())
-    style_rules = []
-    if campaign in ("MetaDemandGen", "MetaDemandCapture") and field == "primary_texts":
-        style_rules.append(
-            "Formatea como 3–6 bullets con salto de línea; cada línea debe comenzar con un emoji; tono enérgico; 180–250 caracteres totales si el límite lo permite."
-        )
-    else:
-        style_rules.append("Frases claras, sin emojis obligatorios; tono directo y orientado a conversión.")
-
-    sys = "Eres un redactor senior de performance marketing que escribe en español neutro para LATAM/US Hispanohablante."
-    user = f"""
-Empresa: {company}
-Campaña: {campaign}
-Contenido/Liga: {content_name}
-Mercado objetivo: {market}
-Brief de campaña: {brief}
-
-Tu tarea:
-- Genera EXACTAMENTE {missing} variantes nuevas para el campo '{field}'.
-- Longitud máxima por variante: {limit} caracteres.
-- Escríbelas 100% en {('Español' if lang=='es' else lang)}.
-- Evita repetir ideas/estructuras de estas semillas existentes (si las hay):
-{seed or '(sin semillas)'}
-
-Reglas de estilo:
-- {style_rules[0]}
-- NO inventes precios o beneficios inexistentes; usa claims genéricos si no hay datos.
-- Evita comillas iniciales/finales.
-- Nada de “Texto 1: …” ni numeraciones explícitas.
-- Devuelve SOLO un JSON con la clave "variants" como array de strings.
-"""
-    try:
-        resp = chat_create(
-            model=MODEL_CHAT,
-            response_format={"type": "json_object"},
-            messages=[{"role": "system", "content": sys}, {"role": "user", "content": user}],
-            temperature=0.9,
-        )
-        raw = resp.choices[0].message.content
-        data = json.loads(raw)
-        variants = [v for v in data.get("variants", []) if isinstance(v, str)]
-    except Exception as e:
-        print(f"[synthesize] fallback por error: {e}")
-        variants = []
-
-    # Sanitizar, recortar y dedup local
-    clean = []
-    seen = set()
-    for v in variants:
-        vv = v.strip()
-        if not vv:
-            continue
-        vv = vv[:limit]
-        k = _normalize_copy(vv)
-        if k not in seen:
-            seen.add(k)
-            clean.append(vv)
-
-    # Si quedó corto, rellena mínimamente respetando límite y estilo
-    while len(clean) < missing:
-        base = (seed or content_name or "Vive el fútbol en vivo")[:limit]
-        alt = base if len(base) <= limit else base[:limit]
-        k = _normalize_copy(alt)
-        if k not in seen:
-            seen.add(k); clean.append(alt)
-        else:
-            clean.append(alt[:limit])
-
-    return clean[:missing]
-
-def _ensure_columns(df: pd.DataFrame, required_cols: list, df_name: str = "DataFrame"):
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise KeyError(f"{df_name} no contiene las columnas requeridas: {missing}. Columns disponibles: {list(df.columns)}")
-
 def _norm_base_name(plan_name: str) -> str:
+    """ Normaliza el nombre de un plan eliminando sufijos de periodicidad. """
     if not isinstance(plan_name, str): return ""
     return plan_name.lower().replace("monthly","").replace("annual","").strip()
 
+def _split_markets_cell(cell: str) -> list[str]:
+    """ Divide una celda de mercados en una lista de mercados individuales. """
+    if not isinstance(cell, str): return []
+    parts = []
+    for token in cell.split(','):
+        tok = token.strip()
+        if tok: parts.append(tok)
+    return parts
+
+def _seems_english(txt: str) -> bool:
+    """ Heurística simple para detectar si un texto parece estar en inglés. """
+    if not isinstance(txt, str): return False
+    t = txt.lower()
+    common_words = (" the ", " to ", " and ", " for ", " with ", " your ", " watch ")
+    return sum(word in f" {t} " for word in common_words) >= 2
+
+
+# ==============================================================================
+# 4. FUNCIONES DE LÓGICA DE NEGOCIO (FILTRADO Y BÚSQUEDA)
+# ==============================================================================
 def get_platform_plans_set(df_plans, platform):
+    """ Obtiene los nombres de planes base y completos para una plataforma. """
     if 'platform' not in df_plans.columns: raise KeyError("'platform' no existe en df_plans")
     if 'plan_name' not in df_plans.columns: raise KeyError("'plan_name' no existe en df_plans")
     mask = df_plans['platform'].fillna("").str.lower() == platform.lower()
@@ -283,19 +116,13 @@ def get_platform_plans_set(df_plans, platform):
     return base_names, full_names
 
 def any_plan_matches_platform(plans_str, platform_base_names):
+    """ Verifica si algún plan en una cadena coincide con los planes base de una plataforma. """
     if not isinstance(plans_str, str): return False
-    listed = [p.strip() for p in plans_str.split(',') if p.strip()]
-    return any(_norm_base_name(p) in platform_base_names for p in listed)
-
-def _split_markets_cell(cell: str) -> list[str]:
-    if not isinstance(cell, str): return []
-    parts = []
-    for token in cell.split(','):
-        tok = token.strip()
-        if tok: parts.append(tok)
-    return parts
+    listed_plans = [p.strip() for p in plans_str.split(',') if p.strip()]
+    return any(_norm_base_name(p) in platform_base_names for p in listed_plans)
 
 def get_default_markets_for_platform(df_plans: pd.DataFrame, platform: str) -> list[str]:
+    """ Obtiene la lista de mercados por defecto para una plataforma. """
     mask = df_plans['platform'].fillna("").str.lower() == platform.lower()
     dfp = df_plans[mask]
     markets_set = set()
@@ -303,64 +130,26 @@ def get_default_markets_for_platform(df_plans: pd.DataFrame, platform: str) -> l
         for m in _split_markets_cell(mcell):
             if m: markets_set.add(m)
     if not markets_set:
-        return ['US/CA','EUROPE','ROW']
+        return ['US/CA','EUROPE','ROW'] # Fallback
     return sorted(markets_set)
 
-def _seems_english(txt: str) -> bool:
-    if not isinstance(txt, str): return False
-    t = txt.lower()
-    common = (" the ", " to ", " and ", " for ", " with ", " your ", " watch ")
-    return sum(tok in f" {t} " for tok in common) >= 2
-
-# ---------- IA ----------
-def chat_create(messages, model=None, max_retries=3, timeout=300, **kwargs):
-    model = model or MODEL_CHAT
-    attempt = 0
-    last_err = None
-    while attempt <= max_retries:
-        try:
-            resp = client.chat.completions.create(model=model, messages=messages, timeout=timeout, **kwargs)
-            return resp
-        except Exception as e:
-            last_err = e
-            wait = (2**attempt) + random.uniform(0,0.5)
-            print(f"[chat_create] intento {attempt+1}/{max_retries+1} falló: {e}. Reintentando en {wait:.1f}s...")
-            sys.stdout.flush()
-            time.sleep(wait)
-            attempt += 1
-    raise last_err
-
-def limpiar_json(texto):
-    print("Intentando limpiar y decodificar la respuesta JSON...")
-    start = texto.find('{'); end = texto.rfind('}') + 1
-    if start == -1 or end == 0:
-        print("ADVERTENCIA: No se encontró un objeto JSON válido en la respuesta de la IA.")
-        return {}
-    json_str = texto[start:end]
-    try:
-        return json.loads(json_str, strict=False)
-    except json.JSONDecodeError as e:
-        print(f"ERROR decodificando JSON: {e}")
-        print(f"Respuesta problemática: {json_str}")
-        return {}
-
-# ---------- búsqueda de contenido con filtro por plataforma y liga ----------
 def obtener_info_contenido(campaign_name, brief, content_df, plans_df, platform, league_or_other):
+    """ Busca y filtra el contenido relevante para una campaña específica. """
     search_text = (campaign_name + " " + brief).lower()
     final_rows_df = pd.DataFrame()
-
     platform_base_names, _ = get_platform_plans_set(plans_df, platform)
+
     content_df = content_df.copy()
-    # pre-filtro por plataforma en la columna plans_available
+    # Pre-filtro por plataforma usando los planes disponibles
     mask_platform = content_df['plans_available'].apply(any_plan_matches_platform, platform_base_names=platform_base_names)
     content_df = content_df[mask_platform]
 
-    # si eligieron una liga (no “Otro”), filtramos por content_name exacto
+    # Filtro por liga si se especifica
     if league_or_other and league_or_other.lower() != "otro":
         content_df = content_df[content_df['content_name'].fillna("").astype(str).str.lower() == league_or_other.lower()]
 
     if content_df.empty:
-        print(f"ADVERTENCIA: no hay contenidos que matcheen plataforma='{platform}' y liga='{league_or_other}'.")
+        print(f"ADVERTENCIA: No hay contenidos que coincidan con plataforma='{platform}' y liga='{league_or_other}'.")
         return final_rows_df
 
     print("Iniciando búsqueda de contenido... (Paso 1: Buscando por nombre de plan)")
@@ -383,175 +172,201 @@ def obtener_info_contenido(campaign_name, brief, content_df, plans_df, platform,
         print("Búsqueda por plan no exitosa. (Paso 2: Buscando por nombre de contenido como fallback)")
         mask_content_fallback = content_df['content_name'].str.lower().apply(lambda name: name in search_text if pd.notna(name) else False)
         content_matched_rows = content_df[mask_content_fallback]
-        final_rows_df = content_matched_rows if not content_matched_rows.empty else pd.DataFrame()
+        final_rows_df = content_matched_rows
 
     if final_rows_df.empty:
-        print("ADVERTENCIA: No se encontró contenido para esta campaña (con filtro de plataforma/league).")
+        print("ADVERTENCIA: No se encontró contenido para esta campaña (con filtro de plataforma/liga).")
     return final_rows_df
 
-# ---------- preprocesamiento ----------
-def _expand_batch(texts, min_chars, max_chars, lang='es'):
-    idxs = [i for i, t in enumerate(texts) if isinstance(t, str) and t.strip() and len(t.strip()) < min_chars]
-    if not idxs:
+
+# ==============================================================================
+# 5. FUNCIONES DE INTERACCIÓN CON LA IA
+# ==============================================================================
+def chat_create(messages, model=None, max_retries=3, timeout=300, **kwargs):
+    """ Realiza una llamada a la API de Chat de OpenAI con reintentos. """
+    model = model or MODEL_CHAT
+    attempt = 0
+    last_err = None
+    while attempt <= max_retries:
+        try:
+            resp = client.chat.completions.create(model=model, messages=messages, timeout=timeout, **kwargs)
+            return resp
+        except Exception as e:
+            last_err = e
+            wait = (2**attempt) + random.uniform(0, 0.5)
+            print(f"[chat_create] Intento {attempt+1}/{max_retries+1} falló: {e}. Reintentando en {wait:.1f}s...")
+            sys.stdout.flush()
+            time.sleep(wait)
+            attempt += 1
+    raise last_err
+
+def limpiar_json(texto: str) -> dict:
+    """ Extrae y decodifica un objeto JSON de una cadena de texto. """
+    print("Intentando limpiar y decodificar la respuesta JSON...")
+    start = texto.find('{')
+    end = texto.rfind('}') + 1
+    if start == -1 or end == 0:
+        print("ADVERTENCIA: No se encontró un objeto JSON válido en la respuesta de la IA.")
+        return {}
+    json_str = texto[start:end]
+    try:
+        return json.loads(json_str, strict=False)
+    except json.JSONDecodeError as e:
+        print(f"ERROR decodificando JSON: {e}")
+        print(f"Respuesta problemática: {json_str}")
+        return {}
+
+def _expand_batch(texts: list, min_chars: int, max_chars: int, lang: str = 'es') -> tuple:
+    """ Expande textos que no cumplen con un mínimo de caracteres usando la IA. """
+    idxs_to_expand = [i for i, t in enumerate(texts) if isinstance(t, str) and t.strip() and len(t.strip()) < min_chars]
+    if not idxs_to_expand:
         return texts, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-    bloques = "\n".join(f"Texto {i+1}: \"{texts[i]}\"" for i in idxs)
-
-    if lang == 'en':
-        system_message = "You are an expert copywriter who lengthens texts in English while staying under a max character limit."
-        prompt_instructions = (f"Rewrite the following texts so that EACH output has AT LEAST {min_chars} and AT MOST {max_chars} characters. Keep meaning and tone. Return only the rewritten texts, one per line, WITHOUT prefixes or quotes.")
-    elif lang == 'pt':
-        system_message = "Você é um redator especialista que alonga textos em português dentro de um limite máximo de caracteres."
-        prompt_instructions = (f"Reescreva para que CADA resultado tenha PELO MENOS {min_chars} e NO MÁXIMO {max_chars} caracteres. Retorne apenas os textos reescritos, um por linha, SEM prefixos ou aspas.")
-    else:
-        system_message = "Eres un redactor experto que expande textos en español sin superar un límite de caracteres."
-        prompt_instructions = (f"Reescribe para que CADA salida tenga COMO MÍNIMO {min_chars} y COMO MÁXIMO {max_chars} caracteres. Devuelve solo los textos reescritos, uno por línea, SIN prefijos ni comillas.")
-
-    resp = chat_create(
-        model=MODEL_CHAT,
-        messages=[{"role":"system","content":system_message},{"role":"user","content":f"{prompt_instructions}\n\n{bloques}"}]
-    )
+    
+    bloques = "\n".join(f"Texto {i+1}: \"{texts[i]}\"" for i in idxs_to_expand)
+    prompts_by_lang = {
+        'en': ("You are an expert copywriter who lengthens texts in English while staying under a max character limit.",
+               f"Rewrite the following texts so that EACH output has AT LEAST {min_chars} and AT MOST {max_chars} characters. Return only the rewritten texts, one per line, WITHOUT prefixes or quotes."),
+        'pt': ("Você é um redator especialista que alonga textos em português dentro de um limite máximo de caracteres.",
+               f"Reescreva para que CADA resultado tenha PELO MENOS {min_chars} e NO MÁXIMO {max_chars} caracteres. Retorne apenas os textos reescritos, um por linha, SEM prefixos ou aspas."),
+        'es': ("Eres un redactor experto que expande textos en español sin superar un límite de caracteres.",
+               f"Reescribe para que CADA salida tenga COMO MÍNIMO {min_chars} y COMO MÁXIMO {max_chars} caracteres. Devuelve solo los textos reescritos, uno por línea, SIN prefijos ni comillas.")
+    }
+    system_message, prompt_instructions = prompts_by_lang.get(lang, prompts_by_lang['es'])
+    
+    resp = chat_create(model=MODEL_CHAT, messages=[{"role": "system", "content": system_message}, {"role": "user", "content": f"{prompt_instructions}\n\n{bloques}"}])
     usage = resp.usage or {}
     lines = [l.strip() for l in resp.choices[0].message.content.splitlines() if l.strip()]
-    cleaned = []
+    
+    cleaned_lines = []
     for line in lines:
-        cl = re.sub(r'^\s*Texto\s*\d+:\s*"?', '', line)
-        if cl.endswith('"'): cl = cl[:-1]
-        cleaned.append(cl.strip())
-    out = list(texts)
-    for i, new in zip(idxs, cleaned):
-        out[i] = new[:max_chars] if len(new) > max_chars else new
-    return out, usage
+        cleaned_line = re.sub(r'^\s*Texto\s*\d+:\s*"?', '', line).removesuffix('"').strip()
+        cleaned_lines.append(cleaned_line)
+        
+    output_texts = list(texts)
+    for i, new_text in zip(idxs_to_expand, cleaned_lines):
+        output_texts[i] = new_text[:max_chars] if len(new_text) > max_chars else new_text
+        
+    return output_texts, usage
 
-def preparar_batch(texts, limit, tipo, lang='es'):
+def preparar_batch(texts: list, limit: int, tipo: str, lang: str = 'es') -> tuple:
+    """ Acorta o expande textos en un lote para cumplir con los límites de caracteres. """
     df = pd.DataFrame({"Original": texts, "Reescrito": texts.copy()})
-    usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
-    # recorte si exceden
-    mask_long = df["Original"].fillna("").astype(str).str.len() > limit
-    idxs_long = df[mask_long].index.tolist()
+    # 1. Acortar textos que exceden el límite
+    idxs_long = df[df["Original"].fillna("").astype(str).str.len() > limit].index.tolist()
     if idxs_long:
-        bloques = "\n".join(f'Texto {i+1}: "{df.at[i,"Original"]}"' for i in idxs_long)
-        if lang == 'en':
-            system_message = "You are an expert copywriter who shortens texts in English."
-            prompt_instructions = f"Rewrite under {limit} characters, keep meaning. Return only the rewritten texts, one per line, WITHOUT prefixes or quotes."
-        elif lang == 'pt':
-            system_message = "Você é um redator especialista que encurta textos em português."
-            prompt_instructions = f"Reescreva com menos de {limit} caracteres. Retorne um por linha, SEM prefixos nem aspas."
-        else:
-            system_message = "Eres un redactor experto que acorta textos en español."
-            prompt_instructions = f"Reescribe con MENOS de {limit} caracteres. Devuelve uno por línea, SIN prefijos ni comillas."
-        resp = chat_create(model=MODEL_CHAT, messages=[{"role":"system","content":system_message},{"role":"user","content":f"{prompt_instructions}\n\n{bloques}"}])
+        bloques = "\n".join(f'Texto {i+1}: "{df.at[i, "Original"]}"' for i in idxs_long)
+        prompts_by_lang = {
+            'en': ("You are an expert copywriter who shortens texts in English.", f"Rewrite under {limit} characters. Return only the rewritten texts, one per line, WITHOUT prefixes or quotes."),
+            'pt': ("Você é um redator especialista que encurta textos em português.", f"Reescreva com menos de {limit} caracteres. Retorne um por linha, SEM prefixos nem aspas."),
+            'es': ("Eres un redactor experto que acorta textos en español.", f"Reescribe con MENOS de {limit} caracteres. Devuelve uno por línea, SIN prefijos ni comillas.")
+        }
+        system_message, prompt_instructions = prompts_by_lang.get(lang, prompts_by_lang['es'])
+        
+        resp = chat_create(model=MODEL_CHAT, messages=[{"role": "system", "content": system_message}, {"role": "user", "content": f"{prompt_instructions}\n\n{bloques}"}])
         usage = resp.usage or {}
-        for k in usage_total: usage_total[k] += getattr(usage,k,0) if hasattr(usage,k) else usage.get(k,0)
+        for k in total_usage: total_usage[k] += getattr(usage, k, 0)
+        
         lines = [l.strip() for l in resp.choices[0].message.content.splitlines() if l.strip()]
-        cleaned_lines = []
-        for line in lines:
-            cl = re.sub(r'^\s*Texto\s*\d+:\s*"?', '', line)
-            if cl.endswith('"'): cl = cl[:-1]
-            cleaned_lines.append(cl.strip())
-        for i, new in zip(idxs_long, cleaned_lines):
-            df.at[i,"Reescrito"] = new if len(new) <= limit else new[:limit]
+        cleaned_lines = [re.sub(r'^\s*Texto\s*\d+:\s*"?', '', line).removesuffix('"').strip() for line in lines]
+        
+        for i, new_text in zip(idxs_long, cleaned_lines):
+            df.at[i, "Reescrito"] = new_text[:limit]
 
-    # expansión si corresponde
+    # 2. Expandir textos que no cumplen el mínimo (si aplica)
     min_chars = MIN_CHARS_BY_FIELD.get(tipo)
     if isinstance(min_chars, int) and min_chars > 0:
-        current = df["Reescrito"].fillna("").astype(str).tolist()
-        if any(t.strip() and len(t.strip()) < min_chars for t in current):
-            expanded, usage2 = _expand_batch(current, min_chars, limit, lang=lang)
-            for k in usage_total: usage_total[k] += getattr(usage2,k,0) if hasattr(usage2,k) else usage2.get(k,0)
+        current_texts = df["Reescrito"].fillna("").astype(str).tolist()
+        if any(t.strip() and len(t.strip()) < min_chars for t in current_texts):
+            expanded, usage2 = _expand_batch(current_texts, min_chars, limit, lang=lang)
+            for k in total_usage: total_usage[k] += getattr(usage2, k, 0)
             df["Reescrito"] = expanded
+            
+    return df["Reescrito"].tolist(), total_usage
 
-    return df["Reescrito"].tolist(), usage_total
-
-def traducir_batch(texts, target):
-    if not texts or all(not t for t in texts): return texts, {"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}
-    if target not in ("en","pt"):             return texts, {"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}
-    lang = "English (US)" if target == "en" else "Português (Brasil)"
+def traducir_batch(texts: list, target_lang: str) -> tuple:
+    """ Traduce un lote de textos a un idioma objetivo usando la IA. """
+    if not texts or all(not t for t in texts) or target_lang not in ("en", "pt"):
+        return texts, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        
+    lang_name = "English (US)" if target_lang == "en" else "Português (Brasil)"
     block = json.dumps(texts, ensure_ascii=False, indent=2)
-    prompt = f"""
-Eres un traductor profesional. Traduce la lista JSON al idioma {lang}.
-NO abrevies ni uses '...'. Devuelve SOLO un objeto JSON con "translations".
-{block}
-""".strip()
+    prompt = f'Eres un traductor profesional. Traduce la lista JSON al idioma {lang_name}. NO abrevies. Devuelve SÓLO un objeto JSON con la clave "translations".\n{block}'
+    
     try:
         resp = chat_create(
             model=MODEL_CHAT,
-            response_format={"type":"json_object"},
-            messages=[{"role":"system","content":"You are an expert translator designed to output JSON."},
-                      {"role":"user","content":prompt}]
+            response_format={"type": "json_object"},
+            messages=[{"role": "system", "content": "You are an expert translator designed to output JSON."}, {"role": "user", "content": prompt}]
         )
-        raw = resp.choices[0].message.content
-        return json.loads(raw).get("translations", texts), resp.usage
+        raw_content = resp.choices[0].message.content
+        return json.loads(raw_content).get("translations", texts), resp.usage
     except Exception as e:
-        print(f"ERROR en traducción {target}: {e}.")
-        return texts, {"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}
+        print(f"ERROR en traducción a '{target_lang}': {e}.")
+        return texts, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
-# ---------- prompt ----------
+
+# ==============================================================================
+# 6. FUNCIÓN DE GENERACIÓN DE PROMPT
+# ==============================================================================
 def generar_prompt_multi(briefs, ref_df, content_info, plan_info, specs_df, base_lang='es'):
-    # muestreo con >=2 primary_texts
-    campo_col = 'campo' if 'campo' in ref_df.columns else ('Campo' if 'Campo' in ref_df.columns else None)
+    """ Construye el prompt principal para la generación de copies. """
+    # Muestreo de ejemplos de referencia, priorizando 'primary_texts'
     N_EXAMPLES = min(5, len(ref_df))
-    base_lang_up = base_lang.upper()
+    campo_col = next((c for c in ['campo', 'Campo'] if c in ref_df.columns), None)
+    
     if campo_col:
         df_primary = ref_df[ref_df[campo_col].astype(str).str.lower() == 'primary_texts']
         take_primary = min(2, len(df_primary), N_EXAMPLES)
-        primary_sample = df_primary.sample(n=take_primary, random_state=42) if take_primary>0 else ref_df.iloc[0:0]
+        primary_sample = df_primary.sample(n=take_primary, random_state=42) if take_primary > 0 else pd.DataFrame()
         df_rest = ref_df.drop(primary_sample.index)
         remaining = N_EXAMPLES - len(primary_sample)
-        rest_sample = df_rest.sample(n=min(remaining, len(df_rest)), random_state=43) if remaining>0 else df_rest.iloc[0:0]
-        ejemplos = pd.concat([primary_sample, rest_sample], ignore_index=True)
-        if len(ejemplos)>1: ejemplos = ejemplos.sample(frac=1, random_state=99).reset_index(drop=True)
+        rest_sample = df_rest.sample(n=min(remaining, len(df_rest)), random_state=43) if remaining > 0 else pd.DataFrame()
+        ejemplos = pd.concat([primary_sample, rest_sample]).sample(frac=1, random_state=99).reset_index(drop=True)
     else:
         ejemplos = ref_df.sample(n=N_EXAMPLES, random_state=42)
 
-    def _pick(r,*names):
-        for n in names:
-            if n in r.index: return r[n]
-        return ""
-
+    def _pick(row, *names): return next((row[n] for n in names if n in row.index), "")
+    
     block_ej = "\n".join(
         f"- [{_pick(r,'market','Market')}][{_pick(r,'idioma','Idioma')}] {_pick(r,'platform','Platform')} {_pick(r,'tipo','Tipo')} {_pick(r,'campo','Campo')}: \"{_pick(r,'texto','Texto')}\""
         for _, r in ejemplos.iterrows()
     )
 
-    template = {m: {c: {f: ([] if cnt>1 else "") for f,(cnt,_) in fields.items()} for c,fields in CAMPAIGNS_STRUCTURE.items()} for m in content_info['markets']}
+    template = {m: {c: {f: ([] if cnt > 1 else "") for f, (cnt, _) in fields.items()} for c, fields in CAMPAIGNS_STRUCTURE.items()} for m in content_info['markets']}
+    
+    info = [
+        f"Contenido: {content_info['content_name']}",
+        f"Detalles: {content_info['details']}" if content_info['details'] else None,
+        f"Idioma base de redacción: {base_lang.upper()}",
+        "Planes y precios disponibles (USA EL SÍMBOLO DE MONEDA EXACTO):"
+    ]
+    info = [i for i in info if i is not None]
 
-    info = [f"Contenido: {content_info['content_name']}"]
-    if content_info['details']: info.append(f"Detalles: {content_info['details']}")
-    info.append(f"Idioma base de redacción: {base_lang_up}")
-    info.append("Planes y precios disponibles (USA EL SÍMBOLO DE MONEDA EXACTO QUE SE MUESTRA):")
     for m, pls in plan_info.items():
-        plan_descriptions = []
         if not pls:
-            desc = "Sin planes definidos"
-        else:
-            for p in pls:
-                plan_name = p.get('plan_name','').strip()
-                cur = str(p.get('currency_symbol','') or '').strip()
-                price = str(p.get('price','') or '').strip()
-                period = str(p.get('recurring_period','') or '').strip()
-                price_info = f"{plan_name} {cur}{price}/{period}" if (cur and price and period) else (plan_name or "Plan")
-                if p.get('has_discount') and p.get('marketing_discount'):
-                    price_info += f" ¡EN OFERTA! ({p['marketing_discount']})"
-                plan_descriptions.append(price_info)
-            desc = "; ".join(plan_descriptions)
-        info.append(f"- Mercado {m}: {desc}")
-
-    valid_campaigns=set(CAMPAIGNS_STRUCTURE.keys())
-    specs_filtered = specs_df[specs_df.get('campaign','').isin(valid_campaigns)] if 'campaign' in specs_df.columns else specs_df
-    if 'platform' in specs_df.columns:
-        specs_filtered = specs_filtered[specs_filtered['platform'].isin({"Google","Meta"})]
+            info.append(f"- Mercado {m}: Sin planes definidos")
+            continue
+        plan_descs = []
+        for p in pls:
+            price_info = f"{p.get('plan_name','').strip()} {p.get('currency_symbol','').strip()}{p.get('price','').strip()}/{p.get('recurring_period','').strip()}"
+            if p.get('has_discount') and p.get('marketing_discount'):
+                price_info += f" ¡EN OFERTA! ({p['marketing_discount']})"
+            plan_descs.append(price_info)
+        info.append(f"- Mercado {m}: {'; '.join(plan_descs)}")
+    
     specs = []
-    for _, s in specs_filtered.iterrows():
-        plat = str(s.get('platform','')).strip()
-        camp = str(s.get('campaign','')).strip()
-        qty  = int(s.get('quantity',0) or 0)
-        title= str(s.get('title','')).strip()
-        chars= int(s.get('characters',0) or 0)
-        style= str(s.get('style','')).strip()
-        det  = str(s.get('details','')).strip()
-        obj  = str(s.get('objective','')).strip()
-        specs.append(f"{plat} {camp}: genera {qty} {title} (máx {chars} car.); {style}; {det}; objetivo: {obj}")
+    if 'campaign' in specs_df.columns and 'platform' in specs_df.columns:
+        valid_campaigns = set(CAMPAIGNS_STRUCTURE.keys())
+        specs_filtered = specs_df[
+            specs_df['campaign'].isin(valid_campaigns) &
+            specs_df['platform'].isin({"Google", "Meta"})
+        ]
+        for _, s in specs_filtered.iterrows():
+            specs.append(f"{s.get('platform','')} {s.get('campaign','')} "
+                         f"genera {s.get('quantity',0)} {s.get('title','')} (máx {s.get('characters',0)} car.); "
+                         f"{s.get('style','')}; {s.get('details','')}; objetivo: {s.get('objective','')}")
 
     prompt = f"""
 Eres un generador experto de copies para marketing digital.
@@ -573,187 +388,119 @@ Especificaciones detalladas por campaña:
 {chr(10).join(specs)}
 
 Reglas Fundamentales:
-- Límites de Caracteres: respeta estrictamente los límites y expande si <60%.
+- Límites de Caracteres: respeta estrictamente los límites y expande si son muy cortos.
 - Estilo: lenguaje emocional, metáforas de fútbol y urgencia.
 - Demand Capture: mencionar descuentos/ofertas/precios cuando aplique.
 - Plan anual: mencionar el descuento si existe.
-- Moneda: usar EXACTAMENTE el símbolo indicado en 'Planes y precios'.
-- Para "primary_texts": genera textos entre {MIN_CHARS_BY_FIELD.get('primary_texts',0)} y el máximo permitido del campo.
-- **Idioma base**: escribe TODOS los textos **exclusivamente en Español (ES)**, sin mezclar ni alternar con otros idiomas. **No incluyas traducciones ni frases en EN/PT**; las traducciones se harán en una fase posterior.
+- Moneda: usar EXACTAMENTE el símbolo indicado.
+- Para "primary_texts": genera textos entre {MIN_CHARS_BY_FIELD.get('primary_texts',0)} y el máximo permitido.
+- Idioma base: escribe TODOS los textos exclusivamente en Español (ES), sin mezclar idiomas. Las traducciones se harán después.
 """.strip()
     return prompt
 
-def generar_excel_multi(data, output_langs=("es",), filename="copies.xlsx", *,brief_context: str = "", company: str = "", market_content_names: dict[str, str] | None = None, campaign_name: str = "",):
-    rows, all_tasks = [], []
-    total_usage = {"prompt_tokens":0,"completion_tokens":0}
 
-    print("--- Iniciando Fase 1: ES ---")
+# ==============================================================================
+# 7. FUNCIÓN DE GENERACIÓN DE ARCHIVO EXCEL
+# ==============================================================================
+def generar_excel_multi(data: dict, output_langs: tuple = ("es",), filename: str = "copies.xlsx") -> dict:
+    """ Procesa los datos generados, traduce y crea un archivo Excel. """
+    all_tasks = []
+    total_usage = {"prompt_tokens": 0, "completion_tokens": 0}
+
+    # Fase 1: Preparar textos en español
+    print("--- Iniciando Fase 1: Procesamiento de copies en ES ---")
     for market, market_data in data.items():
         for campaign, fields in CAMPAIGNS_STRUCTURE.items():
             plat = {'SEM':'Google','GoogleDemandGen':'Google','GooglePMAX':'Google','MetaDemandGen':'Meta','MetaDemandCapture':'Meta'}[campaign]
             tp   = {'SEM':'SEM','GoogleDemandGen':'DemandGen','GooglePMAX':'PMAX','MetaDemandGen':'DemandGen','MetaDemandCapture':'DemandCapture'}[campaign]
-            campaign_data = market_data.get(campaign,{})
-            for field,(count,limit) in fields.items():
+            campaign_data = market_data.get(campaign, {})
+            for field, (count, limit) in fields.items():
                 original_texts = campaign_data.get(field, [])
                 if not isinstance(original_texts, list): original_texts = [original_texts]
-                while len(original_texts) < count: original_texts.append("")
+                original_texts.extend([""] * (count - len(original_texts)))
+
                 if not any(t.strip() for t in original_texts):
-                    es_texts = [""]*count
-                    usage = {"prompt_tokens":0,"completion_tokens":0}
+                    es_texts, usage = [""] * count, {}
                 else:
                     es_texts, usage = preparar_batch(original_texts, limit, field, lang='es')
                     if any(_seems_english(t) for t in es_texts):
-                        # Reforzar que estén en ES reescribiendo (sin traducir; solo “parafraseo” en ES)
-                        es_texts, usage_fix = preparar_batch(es_texts, limit, field, lang='es')
-                        ufix = usage_fix if isinstance(usage_fix, dict) else usage_fix.dict()
-                        total_usage["prompt_tokens"]  += ufix.get('prompt_tokens',0)
-                        total_usage["completion_tokens"] += ufix.get('completion_tokens',0)
-                    u = usage if isinstance(usage, dict) else usage.dict()
-                    total_usage["prompt_tokens"]  += u.get('prompt_tokens',0)
-                    total_usage["completion_tokens"] += u.get('completion_tokens',0)
-                # ===== TOP-UP INTELIGENTE (brief + mercado + contenido) =====
-                dedup = []
-                seen = set()
-                for t in es_texts:
-                    if not isinstance(t, str): 
-                        continue
-                    tt = t.strip()
-                    if not tt:
-                        continue
-                    norm = _normalize_copy(tt)
-                    if norm and norm not in seen:
-                        seen.add(norm)
-                        dedup.append(tt)
+                        es_texts, usage_fix = preparar_batch(es_texts, limit, field, lang='es') # Forzar reescritura en ES
+                        for k in total_usage: total_usage[k] += getattr(usage_fix, k, 0)
+                
+                for k in total_usage: total_usage[k] += getattr(usage, k, 0)
+                all_tasks.append({"market": market, "platform": plat, "tipo": tp, "campo": field, "count": count, "limit": limit, "es_texts": es_texts})
 
-                missing = count - len(dedup)
-                if missing > 0:
-                    # contexto por mercado
-                    content_name_ctx = ""
-                    if isinstance(market_content_names, dict):
-                        content_name_ctx = market_content_names.get(market, "") or ""
-
-                    extras = _synthesize_more_variants(
-                        dedup, missing, field, limit,
-                        brief=brief_context,
-                        company=company or "Marca",
-                        market=market,
-                        campaign=campaign_name,
-                        content_name=content_name_ctx,
-                        lang='es',
-                    )
-                    # normalizar + dedup
-                    for e in extras:
-                        ne = (e or "").strip()
-                        if not ne: 
-                            continue
-                        nkey = _normalize_copy(ne)
-                        if nkey not in seen:
-                            seen.add(nkey)
-                            dedup.append(ne)
-                        if len(dedup) >= count:
-                            break
-
-                # Si todavía falta, duplicá con variantes mínimas (pero no genéricas absurdas)
-                while len(dedup) < count and dedup:
-                    base = dedup[len(dedup) % len(dedup)]
-                    # pequeño tweak: agrega o quita un signo para variar sin romper significado
-                    variant = re.sub(r'[!¡]+$', '', base).strip()
-                    if variant == base:
-                        variant = (base + " ¡No te lo pierdas!")[:limit]
-                    if _normalize_copy(variant) not in seen and len(variant) <= limit:
-                        seen.add(_normalize_copy(variant))
-                        dedup.append(variant)
-                    else:
-                        dedup.append(base[:limit])
-
-                if not dedup:
-                    # fallback último recurso (pero lo evitamos en la práctica)
-                    dedup = [f"Viví la emoción en vivo"[:limit] for _ in range(count)]
-
-                # En Meta/primary_texts: asegurar bullets + emojis
-                if campaign in ("MetaDemandGen", "MetaDemandCapture") and field == "primary_texts":
-                    dedup = [build_meta_bullets(x, limit) for x in dedup]
-
-                es_texts = dedup[:count]
-                # ===== TOP-UP (fin) =====
-
-
-                all_tasks.append({"market":market,"platform":plat,"tipo":tp,"campo":field,"count":count,"limit":limit,"es_texts":es_texts})
-
-    need_en = ("en" in output_langs); need_pt = ("pt" in output_langs)
+    # Fase 2: Traducción
+    need_en = "en" in output_langs
+    need_pt = "pt" in output_langs
     if need_en or need_pt:
         print("--- Iniciando Fase 2: Traducción ---")
-        total_tasks = len(all_tasks)
 
-    for idx, task in enumerate(all_tasks, start=1):
+    rows = []
+    for task in all_tasks:
         es_texts, limit, campo = task['es_texts'], task['limit'], task['campo']
         en_texts, pt_texts = [], []
         has_content = any(t.strip() for t in es_texts)
 
         if need_en and has_content:
             en_texts_raw, en_usage1 = traducir_batch(es_texts, 'en')
-            u1 = en_usage1 if isinstance(en_usage1, dict) else en_usage1.dict()
-            total_usage["prompt_tokens"]  += u1.get('prompt_tokens',0)
-            total_usage["completion_tokens"] += u1.get('completion_tokens',0)
             en_texts, en_usage2 = preparar_batch(en_texts_raw, limit, campo, lang='en')
-            u2 = en_usage2 if isinstance(en_usage2, dict) else en_usage2.dict()
-            total_usage["prompt_tokens"]  += u2.get('prompt_tokens',0)
-            total_usage["completion_tokens"] += u2.get('completion_tokens',0)
-
+            for k in total_usage: total_usage[k] += getattr(en_usage1, k, 0) + getattr(en_usage2, k, 0)
+            
         if need_pt and has_content:
             pt_texts_raw, pt_usage1 = traducir_batch(es_texts, 'pt')
-            u3 = pt_usage1 if isinstance(pt_usage1, dict) else pt_usage1.dict()
-            total_usage["prompt_tokens"]  += u3.get('prompt_tokens',0)
-            total_usage["completion_tokens"] += u3.get('completion_tokens',0)
             pt_texts, pt_usage2 = preparar_batch(pt_texts_raw, limit, campo, lang='pt')
-            u4 = pt_usage2 if isinstance(pt_usage2, dict) else pt_usage2.dict()
-            total_usage["prompt_tokens"]  += u4.get('prompt_tokens',0)
-            total_usage["completion_tokens"] += u4.get('completion_tokens',0)
+            for k in total_usage: total_usage[k] += getattr(pt_usage1, k, 0) + getattr(pt_usage2, k, 0)
 
-        langs_for_rows = [('es', es_texts)]
-        if need_en: langs_for_rows.append(('en', en_texts))
-        if need_pt: langs_for_rows.append(('pt', pt_texts))
-
-        for i in range(task['count']):
-            for lang, texts in langs_for_rows:
+        langs_map = {'es': es_texts}
+        if need_en: langs_map['en'] = en_texts
+        if need_pt: langs_map['pt'] = pt_texts
+        
+        for lang, texts in langs_map.items():
+            for i in range(task['count']):
                 txt = texts[i] if i < len(texts) else ""
                 if txt:
                     rows.append({
                         "Market": task['market'], "Platform": task['platform'], "Tipo": task['tipo'],
-                        "Campo": task['campo'], "Título": f"{task['campo']} {i+1}",
-                        "Idioma": lang, "Texto": txt, "Caracteres": len(txt),
-                        "Max Caracteres": limit, "Check": 1 if len(txt) <= limit else 0
+                        "Campo": task['campo'], "Título": f"{task['campo']} {i+1}", "Idioma": lang,
+                        "Texto": txt, "Caracteres": len(txt), "Max Caracteres": limit,
+                        "Check": 1 if len(txt) <= limit else 0
                     })
-
+    
+    # Creación del archivo Excel
     df_master = pd.DataFrame(rows)
     with pd.ExcelWriter(filename, engine='openpyxl') as writer:
         df_master.to_excel(writer, sheet_name='Todos los Copies', index=False)
-        for (platform, tipo), df_campaign in df_master.groupby(['Platform','Tipo']):
-            sheet_name = f"{platform} {tipo}"
-            df_sorted = df_campaign.sort_values(by=['Market','Idioma','Campo'])
-            df_sorted.to_excel(writer, sheet_name=sheet_name, index=False)
+        for (platform, tipo), df_group in df_master.groupby(['Platform', 'Tipo']):
+            df_group.sort_values(by=['Market', 'Idioma', 'Campo']).to_excel(writer, sheet_name=f"{platform} {tipo}", index=False)
 
+    # Formateo del archivo Excel
     wb = load_workbook(filename)
-    if 'Todos los Copies' in wb.sheetnames:
-        ws_master = wb['Todos los Copies']
-        red_font = Font(color="9C0006"); red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-        for row in ws_master.iter_rows(min_row=2, max_row=ws_master.max_row):
-            if row[8].value == 0:
-                for cell in row: cell.font = red_font; cell.fill = red_fill
+    red_font = Font(color="9C0006")
+    red_fill = PatternFill(fill_type="solid", start_color="FFC7CE", end_color="FFC7CE")
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
         for col in ws.columns:
-            max_length = 0; column_letter = col[0].column_letter
-            if ws[f"{column_letter}1"].value == 'Texto': ws.column_dimensions[column_letter].width = 50; continue
-            for cell in col:
-                try:
-                    if len(str(cell.value)) > max_length: max_length = len(str(cell.value))
-                except: pass
-            ws.column_dimensions[column_letter].width = (max_length + 2)
+            column_letter = col[0].column_letter
+            if ws[f"{column_letter}1"].value == 'Texto':
+                ws.column_dimensions[column_letter].width = 50
+                continue
+            max_length = max(len(str(cell.value)) for cell in col if cell.value is not None)
+            ws.column_dimensions[column_letter].width = max_length + 2
+
+        if sheet_name == 'Todos los Copies':
+            for row in ws.iter_rows(min_row=2):
+                if row[9].value == 0:  # Columna 'Check'
+                    for cell in row:
+                        cell.font = red_font
+                        cell.fill = red_fill
     wb.save(filename)
     return total_usage
 
-# -------- principal para la webapp --------
+
+# ==============================================================================
+# 8. FUNCIÓN PRINCIPAL (ORQUESTADOR)
+# ==============================================================================
 def generar_copies(
     campaign_name: str,
     campaign_brief: str,
@@ -764,122 +511,96 @@ def generar_copies(
     markets_selected: list[str] | None = None
 ) -> tuple:
     """
-    Genera copies con filtro por plataforma y liga.
-    - league_selection: si es "Otro" o no hay match -> fallback a defaults de la plataforma.
-    - langs_csv: "ES" o "ES,EN,PT"
+    Función principal que orquesta la generación de copies, desde la carga de
+    datos hasta la creación del archivo Excel final.
     """
     print(f"Iniciando generación para '{campaign_name}' | Plataforma: {platform_name} | Liga: {league_selection} | Langs: {langs_csv}")
-    OUTPUT_LANGS = _parse_langs(langs_csv)
-
-    total_usage = {"prompt_tokens":0,"completion_tokens":0}
+    
+    # --- 1. Carga y Preparación de Datos ---
+    total_usage = {"prompt_tokens": 0, "completion_tokens": 0}
     base_path = os.path.abspath(os.path.dirname(__file__))
-    df_refs    = _normalize_headers(cargar_referencias(os.path.join(base_path,"Mejor_Performing_Copies_Paid_Fanatiz.xlsx")))
-    df_content = _normalize_headers(cargar_contenidos(os.path.join(base_path,"content_by_country.xlsx")))
-    df_plans   = _normalize_headers(cargar_planes(os.path.join(base_path,"plans_and_pricing.xlsx")))
-    df_specs   = _normalize_headers(cargar_specs(os.path.join(base_path,"platforms_and_campaigns_specs.xlsx")))
+    df_refs = _normalize_headers(cargar_referencias(os.path.join(base_path, "Mejor_Performing_Copies_Paid_Fanatiz.xlsx")))
+    df_content = _normalize_headers(cargar_contenidos(os.path.join(base_path, "content_by_country.xlsx")))
+    df_plans = _normalize_headers(cargar_planes(os.path.join(base_path, "plans_and_pricing.xlsx")))
+    df_specs = _normalize_headers(cargar_specs(os.path.join(base_path, "platforms_and_campaigns_specs.xlsx")))
 
-    _ensure_columns(df_plans,   ['platform','plan_name','markets','recurring_period'], 'plans_and_pricing')
-    _ensure_columns(df_content, ['content_name','markets_available','plans_available','content_languages'], 'content_by_country')
+    _ensure_columns(df_plans, ['platform', 'plan_name', 'markets', 'recurring_period'], 'plans_and_pricing')
+    _ensure_columns(df_content, ['content_name', 'markets_available', 'plans_available', 'content_languages'], 'content_by_country')
 
-    platform_base_names, _ = get_platform_plans_set(df_plans, platform_name)
-
-    relevant_content_df = obtener_info_contenido(
-        campaign_name, campaign_brief, df_content, df_plans, platform_name, league_selection
-    )
-
-    # fallback si está vacío o usuario eligió "Otro"
+    # --- 2. Búsqueda y Filtrado de Contenido Relevante ---
+    relevant_content_df = obtener_info_contenido(campaign_name, campaign_brief, df_content, df_plans, platform_name, league_selection)
+    
+    # Fallback si no se encuentra contenido
     if relevant_content_df.empty or (league_selection and league_selection.lower() == "otro"):
-        print(f"\n⚠️ Fallback por plataforma '{platform_name}' (liga '{league_selection}')")
-        default_plans = DEFAULT_PLANS_BY_PLATFORM.get(platform_name, [])
-        default_markets = get_default_markets_for_platform(df_plans, platform_name)
-        default_markets_str = ",".join(default_markets) if default_markets else "US/CA,EUROPE,ROW"
+        print(f"\n⚠️ Fallback a contenido por defecto para la plataforma '{platform_name}' (liga '{league_selection}')")
         relevant_content_df = pd.DataFrame({
             'content_name': [campaign_name],
-            'markets_available': [default_markets_str],
-            'plans_available': [",".join(default_plans)],
-            'content_languages': [",".join([l.upper() for l in OUTPUT_LANGS])],
+            'markets_available': [",".join(get_default_markets_for_platform(df_plans, platform_name))],
+            'plans_available': [",".join(DEFAULT_PLANS_BY_PLATFORM.get(platform_name, []))],
+            'content_languages': [langs_csv.upper()],
             'content_details': [f'Contenido general de {platform_name}']
         })
-
-    # mercados a procesar (intersección con la plataforma)
-    all_markets = set()
-    relevant_content_df['markets_available'].dropna().str.split(',').apply(
-        lambda lst: all_markets.update(item.strip() for item in lst if item.strip())
-    )
-    # markets encontrados en el contenido (o fallback si es "Otro")
-    markets_to_process = sorted(list(all_markets))
-
-    # limitar a los markets conocidos por la plataforma (seguridad)
+    
+    # --- 3. Determinación de Mercados a Procesar ---
+    all_markets = {item.strip() for m_list in relevant_content_df['markets_available'].dropna().str.split(',') for item in m_list if item.strip()}
     platform_markets = set(get_default_markets_for_platform(df_plans, platform_name))
-    if platform_markets:
-        markets_to_process = sorted(set(markets_to_process) & platform_markets)
+    markets_to_process = sorted(list(all_markets & platform_markets)) if platform_markets else sorted(list(all_markets))
 
-    print(f"Mercados encontrados: {markets_to_process}")
-
-    # === FILTRO POR SELECCIÓN DEL USUARIO (MULTI-SELECT) ===
+    print(f"Mercados potenciales: {markets_to_process}")
+    
     if markets_selected:
-        # normalizamos para comparar sin importar mayúsculas/espacios
-        markets_selected_norm = {m.strip().upper() for m in markets_selected if m.strip()}
+        markets_selected_norm = {m.strip().upper() for m in markets_selected}
         markets_to_process = [m for m in markets_to_process if m.upper() in markets_selected_norm]
         print(f"Mercados filtrados por selección del usuario: {markets_to_process}")
 
-    # si después del filtro no quedó nada, detenemos con un mensaje claro
     if not markets_to_process:
-        print("⚠️ No hay mercados para procesar tras el filtro; se aborta generación.")
-        return output_filename, "Error: no se seleccionaron mercados válidos para esta plataforma/liga."
+        msg = "Error: no se encontraron mercados válidos para procesar tras aplicar los filtros."
+        print(f"⚠️ {msg}")
+        return output_filename, msg
+
+    # --- 4. Generación de Copies por Mercado ---
     final_data_for_excel = {}
+    platform_base_names, _ = get_platform_plans_set(df_plans, platform_name)
 
-    market_to_content_names = {}
-
-    def is_market_in_cell(available_markets, target_market):
-        if not isinstance(available_markets, str): return False
-        market_list = [m.strip().lower() for m in available_markets.split(',')]
-        return target_market.lower() in market_list
-    
     for market in markets_to_process:
-        print("\n" + "="*20 + f" PROCESANDO {market} " + "="*20)
-        market_content_df = relevant_content_df[relevant_content_df['markets_available'].str.contains(market, na=False)]
-        content_names = ", ".join(market_content_df['content_name'].unique())
-        market_to_content_names[market] = content_names
-        plans_available = set()
-        market_content_df['plans_available'].dropna().str.split(',').apply(lambda lst: plans_available.update(p.strip() for p in lst if p.strip()))
-        # quedarse con planes de la plataforma
-        plans_available = {p for p in plans_available if _norm_base_name(p) in platform_base_names}
-        if not plans_available:
-            print(f"  ⚠️ No quedaron planes válidos para la plataforma '{platform_name}' en '{market}'.")
+        print("\n" + "="*20 + f" PROCESANDO MERCADO: {market} " + "="*20)
+        
+        market_content_df = relevant_content_df[relevant_content_df['markets_available'].str.contains(market, na=False, case=False)]
+        
+        plans_in_content = {p.strip() for p_list in market_content_df['plans_available'].dropna().str.split(',') for p in p_list if p.strip()}
+        valid_plans = {p for p in plans_in_content if _norm_base_name(p) in platform_base_names}
+
+        if not valid_plans:
+            print(f"  ⚠️ No se encontraron planes válidos para '{platform_name}' en '{market}'. Saltando...")
             continue
 
-        content_info = {"content_name": content_names, "languages": ["ES"], "details": "", "markets": [market]}
-
-        plan_info = {}
-        matches = []
-        print(f"  -> Buscando precios para: {sorted(list(plans_available))}")
-        for plan_nom in sorted(list(plans_available)):
-            m = re.match(r"(.+?)\s+(monthly|annual)$", plan_nom, flags=re.IGNORECASE)
-            name, period = (m.group(1), m.group(2).capitalize()) if m else (plan_nom, None)
-            mask = (
-                (df_plans["platform"].fillna("").str.lower() == platform_name.lower()) &
-                (df_plans["plan_name"].str.lower() == name.lower()) &
-                (df_plans["markets"].apply(is_market_in_cell, target_market=market))
-            )
-            if period:
-                mask &= (df_plans["recurring_period"].astype(str).str.lower() == period.lower())
-            sel = df_plans[mask]
-            if not sel.empty:
-                matches.append(sel.iloc[0].to_dict())
-        plan_info[market] = matches
-
-        briefs = {
-            'campaign_name': campaign_name,
-            'campaign_brief': campaign_brief,
-            'company': COMPANY_BY_PLATFORM.get(platform_name, platform_name),
-            'company_context': '...',
-            'value_proposition': '...',
-            'extras': f'Plataforma objetivo: {platform_name}'
+        content_info = {
+            "content_name": ", ".join(market_content_df['content_name'].unique()),
+            "details": "", "markets": [market]
         }
 
-        prompt = generar_prompt_multi(briefs, df_refs, content_info, plan_info, df_specs, base_lang='es')
-        resp = chat_create(model=MODEL_CHAT, messages=[{'role':'system','content':'You are a helpful assistant.'},{'role':'user','content':prompt}])
+        # Búsqueda de información de precios
+        plan_info_market = []
+        for plan_name in sorted(list(valid_plans)):
+            mask = (
+                (df_plans["platform"].fillna("").str.lower() == platform_name.lower()) &
+                (df_plans["plan_name"].str.contains(plan_name.split()[0], case=False, na=False)) &
+                (df_plans["markets"].str.contains(market, case=False, na=False))
+            )
+            if "annual" in plan_name.lower(): mask &= (df_plans["recurring_period"].str.lower() == "annual")
+            if "monthly" in plan_name.lower(): mask &= (df_plans["recurring_period"].str.lower() == "monthly")
+            
+            sel = df_plans[mask]
+            if not sel.empty: plan_info_market.append(sel.iloc[0].to_dict())
+        
+        briefs = {
+            'campaign_name': campaign_name, 'campaign_brief': campaign_brief,
+            'company': COMPANY_BY_PLATFORM.get(platform_name, platform_name), 'extras': f'Plataforma objetivo: {platform_name}'
+        }
+
+        prompt = generar_prompt_multi(briefs, df_refs, content_info, {market: plan_info_market}, df_specs, base_lang='es')
+        
+        resp = chat_create(model=MODEL_CHAT, messages=[{'role': 'system', 'content': 'You are a helpful assistant.'}, {'role': 'user', 'content': prompt}])
         total_usage["prompt_tokens"] += resp.usage.prompt_tokens
         total_usage["completion_tokens"] += resp.usage.completion_tokens
 
@@ -887,45 +608,33 @@ def generar_copies(
         if market in market_data:
             final_data_for_excel[market] = market_data[market]
         else:
-            print(f"ADVERTENCIA: la respuesta no contenía la clave '{market}'.")
+            print(f"ADVERTENCIA: La respuesta de la IA no contenía la clave esperada '{market}'.")
 
+    # --- 5. Creación del Archivo de Salida y Resumen de Costos ---
     if not final_data_for_excel:
-        return output_filename, "Error: no se generaron copies válidos."
+        return output_filename, "Error: No se generaron copies válidos después de procesar todos los mercados."
 
-    excel_usage = generar_excel_multi(final_data_for_excel, output_langs=_parse_langs(langs_csv), filename=output_filename, brief_context=campaign_brief, company=COMPANY_BY_PLATFORM.get(platform_name, platform_name), market_content_names=market_to_content_names, campaign_name=campaign_name,)
+    excel_usage = generar_excel_multi(final_data_for_excel, output_langs=_parse_langs(langs_csv), filename=output_filename)
     total_usage["prompt_tokens"] += excel_usage["prompt_tokens"]
     total_usage["completion_tokens"] += excel_usage["completion_tokens"]
 
+    # Cálculo de costos
     PRICE_PER_MILLION_INPUT = 0.250
     PRICE_PER_MILLION_OUTPUT = 2.000
-    input_cost  = (total_usage["prompt_tokens"] / 1_000_000) * PRICE_PER_MILLION_INPUT
+    input_cost = (total_usage["prompt_tokens"] / 1_000_000) * PRICE_PER_MILLION_INPUT
     output_cost = (total_usage["completion_tokens"] / 1_000_000) * PRICE_PER_MILLION_OUTPUT
-    total_cost  = input_cost + output_cost
+    total_cost = input_cost + output_cost
 
     summary = (
         f"🧾 **Campaña:** {campaign_name}\n"
-        f"📝 **Brief utilizado:**\n{campaign_brief}\n\n"
+        f"📝 **Brief:** {campaign_brief}\n\n"
         f"📊 **Resumen de Consumo y Costo** 💰\n"
         f"-----------------------------------------\n"
-        f"Modelo Utilizado: {MODEL_CHAT}\n"
         f"Tokens Entrada: {total_usage['prompt_tokens']:,}\n"
         f"Tokens Salida:  {total_usage['completion_tokens']:,}\n"
         f"**Tokens Totales:** {total_usage['prompt_tokens'] + total_usage['completion_tokens']:,}\n"
-        f"-----------------------------------------\n"
-        f"Costo Entrada: ${input_cost:.6f} USD\n"
-        f"Costo Salida:  ${output_cost:.6f} USD\n"
-        f"**Costo Total Estimado:** **${total_cost:.6f} USD**\n"
+        f"Costo Total Estimado: **${total_cost:.4f} USD**\n"
     )
     print(summary)
     print(f"¡Proceso completado! Archivo guardado en: {output_filename}")
     return output_filename, summary
-
-
-
-
-
-
-
-
-
-
