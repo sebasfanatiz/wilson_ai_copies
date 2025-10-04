@@ -45,6 +45,30 @@ def cargar_contenidos(path):  return pd.read_excel(path)
 def cargar_planes(path):      return pd.read_excel(path)
 def cargar_specs(path):       return pd.read_excel(path)
 
+def cut_safe(s: str, limit: int) -> str:
+    """Recorta en borde de palabra; si no hay espacios, corta completo.
+    Limpia colas raras y evita dejar conectores sueltos."""
+    s = (s or "").strip()
+    if len(s) <= limit:
+        return s
+    cut = s[:limit]
+    # preferir último espacio
+    sp = cut.rfind(" ")
+    if sp >= max(15, int(limit*0.4)):  # evita cortar demasiado
+        cut = cut[:sp]
+    cut = re.sub(r"[\s\-:•,.;…]+$", "", cut)
+    return cut
+
+def enforce_limit_all(texts: list[str], limit: int) -> list[str]:
+    out = []
+    for t in texts:
+        t = (t or "").strip()
+        if not t:
+            out.append("")
+            continue
+        out.append(cut_safe(t, limit))
+    return out
+
 def _normalize_headers(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip().lower().replace('\n',' ').replace('  ',' ').replace(' ','_') for c in df.columns]
@@ -83,117 +107,71 @@ def _valid_bullet(body: str) -> bool:
         return False
     return True
 
-def _ensure_meta_primary_style(text: str, limit: int) -> str:
+def build_meta_bullets(seed_text: str, limit: int, min_bullets=3, max_bullets=5) -> str:
     """
-    Convierte a bullets con emojis (3–6) o normaliza si ya lo eran.
-    Nunca corta a mitad de palabra y jamás deja bullets huérfanos.
+    Construye bullets con emojis desde oraciones completas.
+    Nunca corta palabras. Si no hay suficientes oraciones, sintetiza fillers seguros.
     """
-    if not isinstance(text, str) or not text.strip():
-        return text
+    emojis = ["⚽","🔥","🏆","⏱️","📺","🌎","💥","🎯","🎁","🤩","🎉","🎬","✨","⭐️","🤝","😉"]
+    # separar por oraciones
+    chunks = [c.strip() for c in re.split(r"[.!?;\n]+", (seed_text or "")) if c.strip()]
+    if not chunks:
+        chunks = ["Vive la LVBP en vivo y legal", "Repeticiones y on demand", "Suscríbete en minutos"]
 
-    EMOJI_LINE = re.compile(r"^\s*([\u2600-\u27BF\uFE0F\U0001F300-\U0001FAFF])\s+(.*)$", re.UNICODE)
-    emojis = ["⚽", "🔥", "🏆", "⏱️", "📺", "🌎", "💥", "🎯", "🎁", "🤩", "🎉", "🎬", "✨", "⭐️", "🤝", "😉"]
+    # normalizar y acotar cada oración a 80-90 car para dejar espacio total
+    per_line_cap = min(90, max(60, limit // max(min_bullets, 3)))
+    lines = []
+    for i, ch in enumerate(chunks[:max_bullets*2]):  # algo de margen
+        body = cut_safe(ch, per_line_cap)
+        if len(body) < 8:
+            continue
+        lines.append(f"{emojis[i % len(emojis)]} {body}")
 
-    raw_lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    has_bullets = sum(1 for ln in raw_lines if EMOJI_LINE.match(ln)) >= 2
+    # asegurar mínimo
+    fillers = [
+        "Transmisión en vivo y on demand",
+        "Repeticiones, resúmenes y jugadas clave",
+        "Sigue a tus equipos desde cualquier dispositivo"
+    ]
+    fi = 0
+    while len(lines) < min_bullets and fi < len(fillers):
+        body = cut_safe(fillers[fi], per_line_cap)
+        lines.append(f"{emojis[len(lines) % len(emojis)]} {body}")
+        fi += 1
 
-    bullets = []
-
-    if has_bullets:
-        # Normalizar las líneas que ya venían como bullets
-        for ln in raw_lines:
-            m = EMOJI_LINE.match(ln)
-            if not m:
-                continue
-            emoji = m.group(1)
-            body = _trim_to_word_boundary(m.group(2), 90)  # cap de seguridad por línea
-            if _valid_bullet(body):
-                bullets.append(f"{emoji} {body}")
-    else:
-        # Construir bullets desde oraciones/frases
-        chunks = [c.strip() for c in re.split(r"[.!?;·•\n]+", text) if c.strip()]
-        if not chunks:
-            chunks = [text.strip()]
-        for i, ch in enumerate(chunks):
-            body = _trim_to_word_boundary(ch, 90)
-            if _valid_bullet(body):
-                bullets.append(f"{emojis[i % len(emojis)]} {body}")
-
-    # Asegurar entre 3 y 6 bullets
-    if len(bullets) < 3:
-        # intentar duplicar ideas útiles sin dejar clones obvios
-        seed = [b for b in bullets]
-        i = 0
-        while len(bullets) < 3 and (chunks if not has_bullets else seed):
-            base = chunks[i % len(chunks)] if not has_bullets else seed[i % len(seed)].split(" ", 1)[1]
-            alt = base
-            # minitweak para variar
-            alt = re.sub(r"[!¡]+$", "", alt).strip()
-            if alt == base:
-                alt = (base + " ¡No te lo pierdas!").strip()
-            body = _trim_to_word_boundary(alt, 90)
-            if _valid_bullet(body):
-                bullets.append(f"{emojis[(len(bullets)) % len(emojis)]} {body}")
-            i += 1
-
-    # Limitar a 6 bullets máx
-    bullets = bullets[:6]
-
-    # Empaquetar respetando el límite total (sin cortar palabras)
+    # empaquetar sin exceder el límite total
     packed = []
     budget = limit
-    for idx, b in enumerate(bullets):
-        # si no entra completo, intentar versión recortada a palabra
-        if len(b) <= budget:
-            candidate = b
-        else:
-            candidate = _trim_to_word_boundary(b, budget)
-        # descartar candidatos que queden huérfanos
-        m = EMOJI_LINE.match(candidate or "")
-        body_ok = m.group(2).strip() if m else ""
-        if not _valid_bullet(body_ok):
-            continue
-        # ¿entra sumando el salto de línea?
-        extra = 0 if not packed else 1  # '\n'
-        if len(candidate) + extra <= budget:
+    for ln in lines:
+        extra = 0 if not packed else 1  # salto de línea
+        if len(ln) + extra <= budget:
             if packed:
-                budget -= 1  # por el '\n'
-            packed.append(candidate)
-            budget -= len(candidate)
-        else:
-            # si no entra nada más, cortamos aquí
+                budget -= 1
+            packed.append(ln)
+            budget -= len(ln)
+        if len(packed) >= max_bullets:
             break
 
-    # Si por alguna razón no quedó nada (texto muy corto), intentar un fallback seguro
-    if not packed:
-        body = _trim_to_word_boundary(re.sub(r"\s+", " ", text.strip()), min(90, limit - 2))
-        if not _valid_bullet(body):
-            body = "Lo mejor del béisbol, en vivo y legal. Disfruta partidos completos y repeticiones."
-            body = _trim_to_word_boundary(body, min(90, limit - 2))
-        packed = [f"{emojis[0]} {body}"]
+    # si aún no llegamos al mínimo pero no hay budget, reducimos per_line_cap y reintentamos rápido
+    if len(packed) < min_bullets:
+        per_line_cap = max(40, per_line_cap - 10)
+        packed = []
+        budget = limit
+        for i, ch in enumerate(chunks[:max_bullets*2]):
+            body = cut_safe(ch, per_line_cap)
+            if len(body) < 8:
+                continue
+            ln = f"{emojis[i % len(emojis)]} {body}"
+            extra = 0 if not packed else 1
+            if len(ln) + extra <= budget:
+                if packed:
+                    budget -= 1
+                packed.append(ln)
+                budget -= len(ln)
+            if len(packed) >= min_bullets:
+                break
 
-    # Limpieza final: nada de líneas con sólo emoji/guión
-    final_lines = []
-    for ln in packed:
-        m = EMOJI_LINE.match(ln)
-        if not m:
-            continue
-        body = re.sub(r"[\-–—]\s*$", "", m.group(2)).strip()
-        if _valid_bullet(body):
-            final_lines.append(f"{m.group(1)} {body}")
-
-    # Garantizar al menos 3 líneas si hay presupuesto
-    i = 0
-    while len(final_lines) < 3 and i < len(emojis) and (limit - sum(len(x) for x in final_lines) - max(0, len(final_lines) - 1)) > 20:
-        filler = "Transmisión en vivo, repeticiones y momentos clave."
-        filler = _trim_to_word_boundary(filler, 90)
-        cand = f"{emojis[(len(final_lines)) % len(emojis)]} {filler}"
-        extra = 0 if not final_lines else 1
-        if len(cand) + extra <= limit:
-            final_lines.append(cand)
-        i += 1
-
-    return "\n".join(final_lines)[:limit]
+    return "\n".join(packed)
 
 def _synthesize_more_variants(
     base_texts: list[str],
@@ -694,7 +672,7 @@ def generar_excel_multi(data, output_langs=("es",), filename="copies.xlsx", *,br
 
                 # En Meta/primary_texts: asegurar bullets + emojis
                 if campaign in ("MetaDemandGen", "MetaDemandCapture") and field == "primary_texts":
-                    dedup = [_ensure_meta_primary_style(x, limit) for x in dedup]
+                    dedup = [build_meta_bullets(x, limit) for x in dedup]
 
                 es_texts = dedup[:count]
                 # ===== TOP-UP (fin) =====
@@ -941,6 +919,7 @@ def generar_copies(
     print(summary)
     print(f"¡Proceso completado! Archivo guardado en: {output_filename}")
     return output_filename, summary
+
 
 
 
