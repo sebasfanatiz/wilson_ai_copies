@@ -34,6 +34,9 @@ CAMPAIGNS_STRUCTURE = {
 # Mínimos
 MIN_CHARS_BY_FIELD = {"primary_texts": 200}
 
+# Opcional (solo para legibilidad/seguridad adicional):
+EXPANDABLE_FIELDS = {"primary_texts"}  # whitelist
+
 # Defaults de planes por plataforma
 DEFAULT_PLANS_BY_PLATFORM = {
     "Fanatiz": ["Front Row Monthly", "Front Row Annual"],
@@ -42,6 +45,11 @@ DEFAULT_PLANS_BY_PLATFORM = {
 }
 
 COMPANY_BY_PLATFORM = {"Fanatiz": "Fanatiz", "L1MAX": "L1MAX", "AFA Play": "AFA Play"}
+
+STOPWORDS_END_ES = {
+    "de","del","en","con","para","por","vs","y","o","a","al","la","el","los","las","un","una","unos","unas",
+    "lo","su","sus","tu","tus","mi","mis","este","esta","estos","estas","ese","esa","esos","esas"
+}
 
 # ==============================================================================
 # 3) UTILITIES
@@ -97,30 +105,60 @@ def _norm_str(s: str) -> str:
     s = re.sub(r"\s+", " ", s)  # colapsa espacios
     return s
 
-def _smart_trim(text: str, limit: int) -> str:
+def _polish_ending_es(t: str) -> str:
+    """Quita “colas” feas (conectores sueltos, dos puntos, guiones, 'on' recortado) y deja la frase cerrada."""
+    if not isinstance(t, str):
+        return ""
+    s = t.strip()
+
+    # casitos típicos de truncado feo
+    s = re.sub(r"[:—\-–]\s*$", "", s)          # termina en ':' o guión
+    s = re.sub(r"\s+(?:vs|VS)\s*$", "", s)     # queda "Navegantes vs"
+    s = re.sub(r"\s+(?:o|y)\s+on\s*$", "", s)  # "en vivo o on" -> corta ' o on'
+    s = re.sub(r"\s+on\s*$", "", s)            # " ... on" (origen: 'on demand' cortado)
+    s = re.sub(r"\s+(?:en|de|del)\s*$", "", s) # " ... en", " ... de"
+
+    # si termina con stopword, vamos quitando la última palabra hasta que cierre bien
+    tokens = s.split()
+    while tokens and tokens[-1].lower() in STOPWORDS_END_ES:
+        tokens.pop()
+    s = " ".join(tokens).strip()
+
+    # si quedó vacío por limpieza agresiva, volvemos al original sin la última palabra
+    if not s and t.strip():
+        base = t.strip().rsplit(" ", 1)[0] if " " in t.strip() else t.strip()
+        s = base.strip(":—-– ").strip()
+
+    return s
+
+def _smart_trim(text: str, limit: int, lang: str = "es") -> str:
+    """Recorta con preferencia por cierre de frase; nunca corta palabra ni deja conectores sueltos."""
     if not isinstance(text, str):
         return ""
     t = text.strip()
     if len(t) <= limit:
-        return t
-    # 1) Preferir cortar en puntuación dentro del límite
-    candidates = [m.end() for m in re.finditer(r"[\.!?…]\s", t)]
-    candidates = [c for c in candidates if c <= limit]
-    if candidates:
-        return t[:max(candidates)].strip()
-    # 2) Si no, cortar en el último espacio
+        return _polish_ending_es(t) if lang == "es" else t
+
+    # 1) intentar cortar en puntuación “fina”
+    cut_points = [m.end() for m in re.finditer(r"[\.!?…]\s", t)]
+    cut_points = [c for c in cut_points if c <= limit]
+    if cut_points:
+        return _polish_ending_es(t[:max(cut_points)].strip()) if lang == "es" else t[:max(cut_points)].strip()
+
+    # 2) cortar por último espacio “saludable”
     last_space = t.rfind(" ", 0, limit + 1)
     if last_space != -1 and last_space >= int(limit * 0.6):
-        return t[:last_space].rstrip(" ,;:-").strip()
-    # 3) Si no hay espacios “saludables”, deja las primeras palabras completas
-    words = t.split()
+        return _polish_ending_es(t[:last_space].strip()) if lang == "es" else t[:last_space].strip()
+
+    # 3) ensamblar palabras completas hasta el límite
     out = []
-    for w in words:
-        if len(" ".join(out + [w])) <= limit:
+    for w in t.split():
+        if len((" ".join(out + [w])).strip()) <= limit:
             out.append(w)
         else:
             break
-    return " ".join(out).rstrip(" ,;:-").strip()
+    s = " ".join(out).strip()
+    return _polish_ending_es(s) if lang == "es" else s
 
 def _format_discount(val) -> str:
     s = str(val).strip()
@@ -343,14 +381,19 @@ def preparar_batch(texts: list, limit: int, tipo: str, lang: str = 'es') -> tupl
 
     # 2) Expand if needed
     min_chars = MIN_CHARS_BY_FIELD.get(tipo)
-    if isinstance(min_chars, int) and min_chars > 0:
-        current = df["Reescrito"].fillna("").astype(str).tolist()
-        if any(t.strip() and len(t.strip()) < min_chars for t in current):
-            expanded, usage2 = _expand_batch(current, min_chars, limit, lang=lang)
-            for k in total_usage: total_usage[k] = total_usage.get(k, 0) + getattr(usage2, k, 0)
-            df["Reescrito"] = expanded
-
-    return df["Reescrito"].tolist(), total_usage
+    should_expand = (tipo in MIN_CHARS_BY_FIELD)
+    if should_expand and isinstance(min_chars, int) and min_chars > 0:
+        current_texts = df["Reescrito"].fillna("").astype(str).tolist()
+        needs_expand = any(t.strip() and len(t.strip()) < min_chars for t in current_texts)
+        if needs_expand:
+            expanded, usage2 = _expand_batch(current_texts, min_chars, limit, lang=lang)
+            for k in total_usage:
+                total_usage[k] = total_usage.get(k, 0) + (getattr(usage2, k, 0) or 0)
+            # Importantísimo: al final, AÚN si expandió, garantizamos el límite con smart trim
+            df["Reescrito"] = [ _smart_trim(t, limit, lang=lang) for t in expanded ]
+    else:
+        # Seguridad: nunca expandas headlines / descripciones cortas
+        df["Reescrito"] = [ _smart_trim(t, limit, lang=lang) for t in df["Reescrito"].fillna("").astype(str).tolist() ]
 
 
 def traducir_batch(texts: list, target_lang: str) -> tuple:
@@ -919,5 +962,6 @@ def generar_copies(
     print(summary)
     print(f"¡Proceso completado! Archivo guardado en: {output_filename}")
     return output_filename, summary
+
 
 
