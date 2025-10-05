@@ -11,6 +11,7 @@ import sys
 import copy
 import math
 import pandas as pd
+import unicodedata
 from openai import OpenAI
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
@@ -70,7 +71,7 @@ def _parse_langs(s: str) -> tuple:
 def _norm_base_name(plan_name: str) -> str:
     if not isinstance(plan_name, str):
         return ""
-    return plan_name.lower().replace("monthly", "").replace("annual", "").replace("anual", "").strip()
+    return plan_name.lower().replace("monthly", "").replace("annual", "").replace("anual", "").replace("mensual", "").strip()
 
 
 def _split_markets_cell(cell: str) -> list[str]:
@@ -85,6 +86,16 @@ def _seems_english(txt: str) -> bool:
     t = txt.lower()
     common = (" the ", " to ", " and ", " for ", " with ", " your ", " watch ")
     return sum(w in f" {t} " for w in common) >= 2
+
+def _norm_str(s: str) -> str:
+    if not isinstance(s, str):
+        return ""
+    s = s.replace("\u00A0", " ")  # NBSP -> espacio normal
+    s = unicodedata.normalize("NFKD", s)  # separa diacríticos
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))  # quita acentos
+    s = s.strip().lower()
+    s = re.sub(r"\s+", " ", s)  # colapsa espacios
+    return s
 
 
 # ==============================================================================
@@ -141,8 +152,18 @@ def obtener_info_contenido(campaign_name, brief, content_df, plans_df, platform,
     mask_platform = content_df['plans_available'].apply(any_plan_matches_platform, platform_base_names=platform_base_names)
     content_df = content_df[mask_platform]
 
-    if league_or_other and league_or_other.lower() != "otro":
-        content_df = content_df[content_df['content_name'].fillna("").astype(str).str.lower() == league_or_other.lower()]
+    if league_or_other and _norm_str(league_or_other) != "otro":
+        needle = _norm_str(league_or_other)
+        tmp = content_df.copy()
+        tmp["__norm_content_name"] = tmp["content_name"].fillna("").astype(str).apply(_norm_str)
+
+        # Igualdad, o bien una contiene a la otra (para tolerar NBSP, acentos, variantes)
+        mask_eq = tmp["__norm_content_name"] == needle
+        mask_contains = tmp["__norm_content_name"].str.contains(re.escape(needle))
+        mask_rev_contains = tmp["__norm_content_name"].apply(lambda n: n in needle)
+
+        content_df = tmp[mask_eq | mask_contains | mask_rev_contains].drop(columns=["__norm_content_name"])
+
 
     if content_df.empty:
         print(f"ADVERTENCIA: No hay contenidos que coincidan con plataforma='{platform}' y liga='{league_or_other}'.")
@@ -348,11 +369,11 @@ def _rules_block(plan_info_by_market: dict, base_lang: str) -> str:
         descs = []
         for p in plans:
             # Representación plana y clara
-            pn = p.get('plan_name', '').strip()
-            cs = p.get('currency_symbol', '').strip()
+            pn = str(p.get('plan_name','') or '').strip()
+            cs = str(p.get('currency_symbol','') or '').strip()
             pr = str(p.get('price', '')).strip()
-            rp = p.get('recurring_period', '').strip()
-            mkd = p.get('marketing_discount') or ''
+            rp = str(p.get('recurring_period','') or '').strip()
+            mkd = str(p.get('marketing_discount','') or '').strip()
             tag = f"{pn} {cs}{pr}/{rp}"
             if mkd:
                 tag += f" (PROMO: {mkd})"
@@ -800,7 +821,10 @@ def generar_copies(
         # DemandCapture (Meta): destacar ANUAL con promo
         anual = _annual_plan_with_promo(plan_info_market)
         if anual:
-            sym = anual.get('currency_symbol', '').strip(); price = str(anual.get('price', '')).strip(); rp = anual.get('recurring_period', '').strip(); mkd = anual.get('marketing_discount', '')
+            sym   = str(anual.get('currency_symbol', '') or '').strip()
+            price = str(anual.get('price', '') or '').strip()
+            rp    = str(anual.get('recurring_period', '') or '').strip()
+            mkd   = str(anual.get('marketing_discount', '') or '').strip()
             tag = f"{sym}{price}/{rp} {('( ' + mkd + ')') if mkd else ''}".strip()
             if 'MetaDemandCapture' in merged_market[market]:
                 for field in merged_market[market]['MetaDemandCapture']:
@@ -840,3 +864,4 @@ def generar_copies(
     print(summary)
     print(f"¡Proceso completado! Archivo guardado en: {output_filename}")
     return output_filename, summary
+
