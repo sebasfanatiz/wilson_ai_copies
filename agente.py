@@ -373,7 +373,8 @@ def preparar_batch(texts: list, limit: int, tipo: str, lang: str = 'es') -> tupl
         system_message, prompt_instructions = prompts_by_lang.get(lang, prompts_by_lang['es'])
         resp = chat_create(model=MODEL_CHAT, messages=[{"role": "system", "content": system_message}, {"role": "user", "content": f"{prompt_instructions}\n\n{bloques}"}])
         usage = getattr(resp, 'usage', None) or {}
-        for k in total_usage: total_usage[k] = total_usage.get(k, 0) + getattr(usage, k, 0)
+        for k in total_usage:
+            total_usage[k] = total_usage.get(k, 0) + (getattr(usage, k, 0) or (usage.get(k, 0) if isinstance(usage, dict) else 0))
         lines = [l.strip() for l in resp.choices[0].message.content.splitlines() if l.strip()]
         cleaned = [re.sub(r'^\s*Texto\s*\d+:\s*"?', '', line).removesuffix('"').strip() for line in lines]
         for i, new_text in zip(idxs_long, cleaned):
@@ -394,6 +395,8 @@ def preparar_batch(texts: list, limit: int, tipo: str, lang: str = 'es') -> tupl
     else:
         # Seguridad: nunca expandas headlines / descripciones cortas
         df["Reescrito"] = [ _smart_trim(t, limit, lang=lang) for t in df["Reescrito"].fillna("").astype(str).tolist() ]
+        
+    return df["Reescrito"].tolist(), total_usage
 
 
 def traducir_batch(texts: list, target_lang: str) -> tuple:
@@ -716,11 +719,15 @@ def generar_excel_multi(data: dict, output_langs: tuple = ("es",), filename: str
         if need_en and has_content:
             en_raw, en_u1 = traducir_batch(es_texts, 'en')
             en_texts, en_u2 = preparar_batch(en_raw, limit, campo, lang='en')
-            for k in total_usage: total_usage[k] += (getattr(en_u1, k, 0) or 0) + (getattr(en_u2, k, 0) or 0)
+            for k in total_usage:
+                total_usage[k] += (getattr(en_u1, k, 0) or (en_u1.get(k,0) if isinstance(en_u1, dict) else 0))
+                total_usage[k] += (getattr(en_u2, k, 0) or (en_u2.get(k,0) if isinstance(en_u2, dict) else 0))
         if need_pt and has_content:
             pt_raw, pt_u1 = traducir_batch(es_texts, 'pt')
             pt_texts, pt_u2 = preparar_batch(pt_raw, limit, campo, lang='pt')
-            for k in total_usage: total_usage[k] += (getattr(pt_u1, k, 0) or 0) + (getattr(pt_u2, k, 0) or 0)
+            for k in total_usage:
+                total_usage[k] += (getattr(pt_u1, k, 0) or (pt_u1.get(k,0) if isinstance(pt_u1, dict) else 0))
+                total_usage[k] += (getattr(pt_u2, k, 0) or (pt_u2.get(k,0) if isinstance(pt_u2, dict) else 0))
 
         langs_map = {'es': es_texts}
         if need_en: langs_map['en'] = en_texts
@@ -962,6 +969,7 @@ def generar_copies(
     print(summary)
     print(f"¡Proceso completado! Archivo guardado en: {output_filename}")
     return output_filename, summary
+
 
 
 
