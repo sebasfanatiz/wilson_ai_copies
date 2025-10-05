@@ -97,6 +97,59 @@ def _norm_str(s: str) -> str:
     s = re.sub(r"\s+", " ", s)  # colapsa espacios
     return s
 
+def _smart_trim(text: str, limit: int) -> str:
+    if not isinstance(text, str):
+        return ""
+    t = text.strip()
+    if len(t) <= limit:
+        return t
+    # 1) Preferir cortar en puntuación dentro del límite
+    candidates = [m.end() for m in re.finditer(r"[\.!?…]\s", t)]
+    candidates = [c for c in candidates if c <= limit]
+    if candidates:
+        return t[:max(candidates)].strip()
+    # 2) Si no, cortar en el último espacio
+    last_space = t.rfind(" ", 0, limit + 1)
+    if last_space != -1 and last_space >= int(limit * 0.6):
+        return t[:last_space].rstrip(" ,;:-").strip()
+    # 3) Si no hay espacios “saludables”, deja las primeras palabras completas
+    words = t.split()
+    out = []
+    for w in words:
+        if len(" ".join(out + [w])) <= limit:
+            out.append(w)
+        else:
+            break
+    return " ".join(out).rstrip(" ,;:-").strip()
+
+def _format_discount(val) -> str:
+    s = str(val).strip()
+    if not s:
+        return ""
+    # 1) ya trae el símbolo
+    if s.endswith("%"):
+        try:
+            float(s[:-1].replace(",", "."))
+            return s
+        except:
+            return s
+    # 2) decimal tipo 0.25
+    try:
+        f = float(s.replace(",", "."))
+        if 0 < f < 1:
+            return f"{int(round(f * 100))}%"
+    except:
+        pass
+    # 3) número entero "25"
+    if re.fullmatch(r"\d{1,3}", s):
+        return f"{s}%"
+    # 4) extraer un porcentaje si está embebido
+    m = re.search(r"(\d{1,3})\s*%", s)
+    if m:
+        return f"{m.group(1)}%"
+    return s  # fallback tal cual
+
+
 
 # ==============================================================================
 # 4) DATA LOADERS
@@ -144,51 +197,53 @@ def get_default_markets_for_platform(df_plans: pd.DataFrame, platform: str) -> l
 
 
 def obtener_info_contenido(campaign_name, brief, content_df, plans_df, platform, league_or_other):
-    search_text = (campaign_name + " " + brief).lower()
-    final_rows_df = pd.DataFrame()
+    # 0) Copia y columnas de trabajo
+    df = content_df.copy()
+    df["__name_norm"] = df["content_name"].fillna("").astype(str).apply(_norm_str)
+    df["__plans_norm"] = df["plans_available"].fillna("").astype(str)
+    df["__plans_norm"] = df["__plans_norm"].apply(lambda s: ", ".join(_norm_base_name(p) for p in s.split(",") if p.strip()))
+    league_norm = _norm_str(league_or_other)
+
+    # 1) Filtro por LIGA primero (tolerante)
+    if league_norm and league_norm != "otro":
+        mask_eq = df["__name_norm"] == league_norm
+        mask_contains = df["__name_norm"].str.contains(re.escape(league_norm))
+        mask_rev_contains = df["__name_norm"].apply(lambda n: n in league_norm)
+        df = df[mask_eq | mask_contains | mask_rev_contains]
+        # si aún así no hay, no salimos todavía; seguimos con filtros por planes
+
+    # 2) Filtro por PLANES válidos de la PLATAFORMA
     platform_base_names, _ = get_platform_plans_set(plans_df, platform)
+    # normalizamos también el set por si hay "anual"
+    platform_base_names = {_norm_base_name(x) for x in platform_base_names}
 
-    content_df = content_df.copy()
-    mask_platform = content_df['plans_available'].apply(any_plan_matches_platform, platform_base_names=platform_base_names)
-    content_df = content_df[mask_platform]
+    def _row_has_any_platform_plan(row):
+        row_plans = [p.strip() for p in row.split(",") if p.strip()]
+        return any(p in platform_base_names for p in row_plans)
 
-    if league_or_other and _norm_str(league_or_other) != "otro":
-        needle = _norm_str(league_or_other)
-        tmp = content_df.copy()
-        tmp["__norm_content_name"] = tmp["content_name"].fillna("").astype(str).apply(_norm_str)
+    df = df[df["__plans_norm"].apply(_row_has_any_platform_plan)]
 
-        # Igualdad, o bien una contiene a la otra (para tolerar NBSP, acentos, variantes)
-        mask_eq = tmp["__norm_content_name"] == needle
-        mask_contains = tmp["__norm_content_name"].str.contains(re.escape(needle))
-        mask_rev_contains = tmp["__norm_content_name"].apply(lambda n: n in needle)
+    # 3) Si quedó vacío, intentamos fallback por alias LVBP/Liga Venezolana…
+    if df.empty and league_norm and league_norm != "otro":
+        aliases = [
+            "lvbp",
+            "liga venezolana de beisbol profesional",
+            "liga venezolana de béisbol profesional",
+        ]
+        df2 = content_df.copy()
+        df2["__name_norm"] = df2["content_name"].fillna("").astype(str).apply(_norm_str)
+        mask_alias = False
+        for a in aliases:
+            a_norm = _norm_str(a)
+            mask_alias = mask_alias | df2["__name_norm"].str.contains(re.escape(a_norm))
+        if mask_alias is not False:
+            df = df2[mask_alias]
 
-        content_df = tmp[mask_eq | mask_contains | mask_rev_contains].drop(columns=["__norm_content_name"])
-
-
-    if content_df.empty:
-        print(f"ADVERTENCIA: No hay contenidos que coincidan con plataforma='{platform}' y liga='{league_or_other}'.")
-        return final_rows_df
-
-    def check_plan_in_text(plans_str, text_to_search):
-        if not isinstance(plans_str, str): return False
-        full_plans = [p.strip().lower() for p in plans_str.split(',') if p.strip()]
-        base_plans = {_norm_base_name(p) for p in full_plans}
-        return any((bp in text_to_search) and (bp in platform_base_names) for bp in base_plans if bp)
-
-    mask_plan = content_df['plans_available'].apply(check_plan_in_text, text_to_search=search_text)
-    plan_matched_rows = content_df[mask_plan]
-
-    if not plan_matched_rows.empty:
-        mask_content_refine = plan_matched_rows['content_name'].str.lower().apply(lambda name: name in search_text if pd.notna(name) else False)
-        secondary = plan_matched_rows[mask_content_refine]
-        final_rows_df = secondary if not secondary.empty else plan_matched_rows
-    else:
-        mask_content_fallback = content_df['content_name'].str.lower().apply(lambda name: name in search_text if pd.notna(name) else False)
-        final_rows_df = content_df[mask_content_fallback]
-
-    if final_rows_df.empty:
+    # 4) Limpieza de columnas internas
+    if df.empty:
         print("ADVERTENCIA: No se encontró contenido para esta campaña (con filtro de plataforma/liga).")
-    return final_rows_df
+        return pd.DataFrame()
+    return df.drop(columns=[c for c in df.columns if c.startswith("__")], errors="ignore")
 
 
 # ==============================================================================
@@ -260,7 +315,7 @@ def _expand_batch(texts: list, min_chars: int, max_chars: int, lang: str = 'es')
     cleaned = [re.sub(r'^\s*Texto\s*\d+:\s*"?', '', l).removesuffix('"').strip() for l in lines]
     out = list(texts)
     for i, new in zip(idxs, cleaned):
-        out[i] = new[:max_chars] if len(new) > max_chars else new
+        out[i] = _smart_trim(new, max_chars)
     return out, usage
 
 
@@ -284,7 +339,7 @@ def preparar_batch(texts: list, limit: int, tipo: str, lang: str = 'es') -> tupl
         lines = [l.strip() for l in resp.choices[0].message.content.splitlines() if l.strip()]
         cleaned = [re.sub(r'^\s*Texto\s*\d+:\s*"?', '', line).removesuffix('"').strip() for line in lines]
         for i, new_text in zip(idxs_long, cleaned):
-            df.at[i, "Reescrito"] = new_text[:limit]
+            df.at[i, "Reescrito"] = _smart_trim(new_text, limit)
 
     # 2) Expand if needed
     min_chars = MIN_CHARS_BY_FIELD.get(tipo)
@@ -373,7 +428,7 @@ def _rules_block(plan_info_by_market: dict, base_lang: str) -> str:
             cs = str(p.get('currency_symbol','') or '').strip()
             pr = str(p.get('price', '')).strip()
             rp = str(p.get('recurring_period','') or '').strip()
-            mkd = str(p.get('marketing_discount','') or '').strip()
+            mkd = _format_discount(p.get('marketing_discount', ''))
             tag = f"{pn} {cs}{pr}/{rp}"
             if mkd:
                 tag += f" (PROMO: {mkd})"
@@ -491,7 +546,7 @@ def _ensure_list_of_len(value, length):
 
 
 def _trim_to_limits(arr, limit):
-    return [(s or "")[:limit] for s in arr]
+    return [_smart_trim(s or "", limit) for s in arr]
 
 
 def _post_enforce_counts_and_limits(struct: dict):
@@ -824,8 +879,8 @@ def generar_copies(
             sym   = str(anual.get('currency_symbol', '') or '').strip()
             price = str(anual.get('price', '') or '').strip()
             rp    = str(anual.get('recurring_period', '') or '').strip()
-            mkd   = str(anual.get('marketing_discount', '') or '').strip()
-            tag = f"{sym}{price}/{rp} {('( ' + mkd + ')') if mkd else ''}".strip()
+            mkd   = _format_discount(anual.get('marketing_discount', ''))
+            tag = f"{sym}{price}/{rp}" + (f" ({mkd} de descuento)" if mkd else "")
             if 'MetaDemandCapture' in merged_market[market]:
                 for field in merged_market[market]['MetaDemandCapture']:
                     merged_market[market]['MetaDemandCapture'][field] = [
@@ -864,4 +919,5 @@ def generar_copies(
     print(summary)
     print(f"¡Proceso completado! Archivo guardado en: {output_filename}")
     return output_filename, summary
+
 
