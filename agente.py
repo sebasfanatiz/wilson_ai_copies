@@ -187,7 +187,56 @@ def _format_discount(val) -> str:
         return f"{m.group(1)}%"
     return s  # fallback tal cual
 
+def _sanitize_google_no_exclaim(struct_market: dict) -> dict:
+    """Quita '!' de todos los campos de campañas Google (SEM, GoogleDemandGen, GooglePMAX)."""
+    for camp in ['SEM', 'GoogleDemandGen', 'GooglePMAX']:
+        if camp not in struct_market:
+            continue
+        for field, arr in struct_market[camp].items():
+            if isinstance(arr, list):
+                struct_market[camp][field] = [(s.replace('!', '') if isinstance(s, str) else s) for s in arr]
+            elif isinstance(arr, str):
+                struct_market[camp][field] = arr.replace('!', '')
+    return struct_market
 
+def _multiline_by_sentence(s: str) -> str:
+    """Divide el texto en oraciones y las pone cada una en una línea nueva."""
+    if not isinstance(s, str):
+        return ""
+    t = s.strip()
+    if not t:
+        return ""
+    # separa por final de oración, conservando el signo
+    parts = re.split(r'(?<=[\.!?…])\s+', t)
+    parts = [p.strip() for p in parts if p.strip()]
+    # evita líneas ultra cortas residuales tipo 'y', 'en', etc.
+    lines = []
+    for p in parts:
+        # si quedó colgando una palabra muy corta por recorte, se ignora
+        if len(p) <= 2 and p.lower() in STOPWORDS_END_ES:
+            continue
+        lines.append(p)
+    return "\n".join(lines)
+
+def _format_meta_primary_texts_multiline(struct_market: dict) -> dict:
+    """En Meta, cada oración en una línea para primary_texts de ambas campañas, respetando límite."""
+    for camp in ['MetaDemandGen', 'MetaDemandCapture']:
+        if camp not in struct_market:
+            continue
+        if 'primary_texts' not in struct_market[camp]:
+            continue
+        count, limit = CAMPAIGNS_STRUCTURE[camp]['primary_texts']
+        arr = struct_market[camp]['primary_texts']
+        if not isinstance(arr, list):
+            arr = [arr]
+        out = []
+        for s in arr:
+            ms = _multiline_by_sentence(s if isinstance(s, str) else "")
+            # revalida límites después del formateo
+            out.append(_smart_trim(ms, limit, lang='es'))
+        # asegura cantidad exacta
+        struct_market[camp]['primary_texts'] = _ensure_list_of_len(out, count)
+    return struct_market
 
 # ==============================================================================
 # 4) DATA LOADERS
@@ -491,6 +540,7 @@ def _google_rules_text():
         "- SEM: se reutilizará de PMAX (headlines = primeros 14; long_descriptions = mismas 4).\n"
         "- Precios: NUNCA inventar. Sólo los provistos.\n"
         "- Se puede destacar EL PLAN ANUAL con promo exacta (si aplica).\n"
+        "- **PROHIBIDO** usar signos de exclamación (!). Evitar interjecciones. \n"
     )
 
 
@@ -498,6 +548,7 @@ def _meta_rules_text():
     return (
         "Reglas Meta (estrictas):\n"
         "- primary_texts: SIEMPRE incluir emojis relacionados al texto (usar los emojis como bullets es una buena práctica). Mínimo 200 caracteres, <=250.\n"
+        "- formatea primary_texts: cada oración debe ir en una línea separada (usa salto de línea '\\n'; no uses bullet points de '-', usa emojis como bullets si querés). \n"
         "- headlines & descriptions: pueden reutilizar titulares/beneficios de Google cuando sean aplicables.\n"
         "- Demand Capture: mencionar explícitamente el plan ANUAL + promo (si existe) con símbolo y periodo exactos.\n"
         "- NO inventar precios.\n"
@@ -914,6 +965,13 @@ def generar_copies(
         # Post-enforce counts/limits
         merged_market = _post_enforce_counts_and_limits(merged_market)
 
+        # Post-procesado específico de formato
+        # 1) Google: prohibir '!' en todo
+        merged_market[market] = _sanitize_google_no_exclaim(merged_market[market])
+
+        # 2) Meta primary_texts: una oración por línea
+        merged_market[market] = _format_meta_primary_texts_multiline(merged_market[market])
+
         # Reglas semánticas extra: ajustar menciones de precio
         # DemandGen (Google/Meta): usar menor precio si se menciona precio
         low_token = _lowest_price_token(plan_info_market)
@@ -969,6 +1027,7 @@ def generar_copies(
     print(summary)
     print(f"¡Proceso completado! Archivo guardado en: {output_filename}")
     return output_filename, summary
+
 
 
 
