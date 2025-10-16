@@ -271,7 +271,8 @@ def procesar():
     markets    = request.form.getlist('markets')  # <<--- acá
 
     safe_title = re.sub(r'[^0-9A-Za-z]+', '_', titulo).strip('_')
-    filename        = f"copies_{safe_title}.xlsx"
+    safe_platform = re.sub(r'[^0-9A-Za-z]+', '_', plataforma).strip('_')
+    filename      = f"copies_{safe_platform}_{safe_title}.xlsx"
     path_out        = os.path.join(SALIDAS_DIR, filename)
     path_processing = path_out + '.processing'
     path_error      = path_out + '.error'
@@ -338,6 +339,7 @@ def descargar(filename):
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
+
 
 
 
