@@ -127,14 +127,7 @@
     <div class="header">
       <img id="brand-logo" src="{{ url_for('static', filename='arte/logo.png') }}" alt="Logo">
       <h1>Wilson Generador de Copies AI</h1>
-
-      {% if session.user %}
-      <div style="text-align: right; margin-top: -30px; margin-bottom: 15px;">
-          <span style="color: #ccc;">Hola, {{ session.user }}</span> | 
-          <a href="{{ url_for('logout') }}" style="color: #FF3200; text-decoration: none; font-weight: bold;">Cerrar Sesión</a>
-      </div>
-      {% endif %}
-      </div>
+    </div>
 
     <form id="copy-form" action="/procesar" method="post">
       <label for="plataforma">Plataforma</label>
@@ -224,8 +217,24 @@
         </ul>
       </div>
     {% endif %}
+  </div> {% if session.user %}
+  <div style="text-align: center; padding-bottom: 40px;">
+      <a href="{{ url_for('logout') }}" 
+          style="display: inline-block; 
+                margin-top: 20px; 
+                padding: 10px 20px; 
+                font-size: 1rem;
+                font-weight: 700; 
+                background-color: #FF3200; 
+                color: #fff;
+                border: none; 
+                border-radius: 4px; 
+                cursor: pointer;
+                text-decoration: none;">
+          Cerrar Sesión
+      </a>
   </div>
-
+  {% endif %}
   <!-- Script ÚNICO: branding + ligas + mercados -->
   <script>
     (function () {
@@ -316,6 +325,7 @@
   </script>
 </body>
 </html>
+
 
 
 
