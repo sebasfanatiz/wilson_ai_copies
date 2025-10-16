@@ -127,7 +127,14 @@
     <div class="header">
       <img id="brand-logo" src="{{ url_for('static', filename='arte/logo.png') }}" alt="Logo">
       <h1>Wilson Generador de Copies AI</h1>
-    </div>
+
+      {% if session.user %}
+      <div style="text-align: right; margin-top: -30px; margin-bottom: 15px;">
+          <span style="color: #ccc;">Hola, {{ session.user }}</span> | 
+          <a href="{{ url_for('logout') }}" style="color: #FF3200; text-decoration: none; font-weight: bold;">Cerrar Sesión</a>
+      </div>
+      {% endif %}
+      </div>
 
     <form id="copy-form" action="/procesar" method="post">
       <label for="plataforma">Plataforma</label>
@@ -309,6 +316,7 @@
   </script>
 </body>
 </html>
+
 
 
 
