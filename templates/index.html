@@ -181,7 +181,7 @@
               <span style="color: #bbb; font-size: 0.8em;">Creado: {{ item.fecha }}</span>
             </div>
 
-            <div style="display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 12px;">
+            <div style="display: flex; justify-content: center; align-items: baseline; gap: 10px; margin-top: 12px;">
               {% if item.status == 'success' %}
                 <a href="{{ url_for('descargar', filename=item.nombre) }}"
                   style="background-color: #28a745; color: white; padding: 5px 10px; font-size: 0.8rem; border-radius: 4px; text-decoration: none;">
@@ -326,6 +326,7 @@
   </script>
 </body>
 </html>
+
 
 
 
