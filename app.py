@@ -1,8 +1,10 @@
 # app.py
-from flask import Flask, render_template, request, send_from_directory, redirect, url_for, flash, jsonify
+from flask import Flask, render_template, request, send_from_directory, redirect, url_for, flash, jsonify, session
 import pandas as pd
 from datetime import datetime
 import threading, os, re
+from functools import wraps
+
 try:
     from openai import BadRequestError
 except ImportError:
@@ -16,6 +18,63 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY", "un-secreto-muy-seguro")
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 SALIDAS_DIR = os.path.join(BASE_DIR, 'salidas')
 os.makedirs(SALIDAS_DIR, exist_ok=True)
+
+## LÓGICA DE AUTENTICACIÓN
+## ==============================================================================
+
+def _cargar_usuarios():
+    """Carga los usuarios desde el archivo Excel y los devuelve como un diccionario."""
+    try:
+        path_usuarios = os.path.join(BASE_DIR, "usuarios.xlsx")
+        df = pd.read_excel(path_usuarios)
+        # Convierte el DataFrame a un diccionario para búsqueda rápida: {'usuario': 'contraseña'}
+        return pd.Series(df.contraseña.values, index=df.usuario).to_dict()
+    except FileNotFoundError:
+        print("ADVERTENCIA: No se encontró el archivo 'usuarios.xlsx'. Nadie podrá iniciar sesión.")
+        return {}
+    except Exception as e:
+        print(f"Error cargando usuarios: {e}")
+        return {}
+
+def login_required(f):
+    """Decorador para proteger rutas que requieren inicio de sesión."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user' not in session:
+            flash("Debes iniciar sesión para ver esta página.", "error")
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """Maneja el inicio de sesión."""
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        usuarios = _cargar_usuarios()
+        
+        if username in usuarios and usuarios[username] == password:
+            session['user'] = username  # Guarda el usuario en la sesión
+            flash("¡Inicio de sesión exitoso!", "success")
+            return redirect(url_for('index'))
+        else:
+            flash("Usuario o contraseña incorrectos.", "error")
+            return redirect(url_for('login'))
+            
+    # Si es GET, o si el login falla, muestra la página de login
+    return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    """Maneja el cierre de sesión."""
+    session.pop('user', None)  # Elimina al usuario de la sesión
+    flash("Has cerrado sesión.", "success")
+    return redirect(url_for('login'))
+
+## LÓGICA DE LA APP EXISTENTE (AHORA PROTEGIDA)
+## ==============================================================================
 
 def _load_leagues():
     # carga únicas de content_name + “Otro”
@@ -97,6 +156,7 @@ def _get_default_markets_for_platform(platform: str):
 
 
 @app.route('/', methods=['GET'])
+@login_required ## Proteger ruta
 def index():
     archivos_info = []
     if os.path.exists(SALIDAS_DIR):
@@ -138,12 +198,14 @@ def index():
     return render_template('index.html', archivos=archivos_info, plataformas=plataformas, ligas=ligas)
 
 @app.route('/api/ligas', methods=['GET'])
+@login_required ## Proteger ruta
 def api_ligas():
     platform = request.args.get('platform', 'Fanatiz')
     ligas = _load_leagues_by_platform(platform)
     return jsonify(ligas)
 
 @app.route('/api/markets', methods=['GET'])
+@login_required ## Proteger ruta
 def api_markets():
     platform = request.args.get('platform', 'Fanatiz')
     league   = request.args.get('league', 'Otro')
@@ -195,6 +257,7 @@ def api_markets():
         return jsonify([])
 
 @app.route('/procesar', methods=['POST'])
+@login_required ## Proteger ruta
 def procesar():
     titulo     = request.form['titulo_campaña']
     brief      = request.form['brief_campaña']
@@ -250,6 +313,7 @@ def procesar():
 
 
 @app.route('/eliminar/<path:filename>', methods=['POST'])
+@login_required ## Proteger ruta
 def eliminar(filename):
     safe_filename = os.path.basename(filename)
     path_xlsx = os.path.join(SALIDAS_DIR, safe_filename)
@@ -268,11 +332,13 @@ def eliminar(filename):
     return redirect(url_for('index'))
 
 @app.route('/salidas/<path:filename>')
+@login_required ## Proteger ruta
 def descargar(filename):
     return send_from_directory(SALIDAS_DIR, filename, as_attachment=True)
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
+
 
 
 
