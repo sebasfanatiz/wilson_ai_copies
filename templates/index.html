@@ -174,45 +174,46 @@
         <h2>Archivos Generados</h2>
         <ul style="padding-left: 0;">
           {% for item in archivos %}
-            <li style="display: flex; flex-direction: column; justify-content: space-between; align-items: stretch; background-color: rgba(0,0,0,0.2); padding: 10px; border-radius: 4px; margin-bottom: 8px;">
-              <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-                <div style="flex-grow: 1;">
-                  <strong style="color: #fff;">{{ item.nombre }}</strong><br>
-                  <span style="color: #bbb; font-size: 0.8em;">Creado: {{ item.fecha }}</span>
-                </div>
-                <div style="display: flex; align-items: center;">
-                  {% if item.status == 'success' %}
-                    <a href="{{ url_for('descargar', filename=item.nombre) }}"
-                       style="background-color: #28a745; color: white; padding: 5px 10px; font-size: 0.8rem; border-radius: 4px; text-decoration: none; margin-right: 10px;">
-                      Descargar
-                    </a>
-                  {% endif %}
-                  <form action="{{ url_for('eliminar', filename=item.nombre) }}" method="POST" style="margin: 0;">
-                    <button type="submit"
-                            onclick="return confirm('¿Estás seguro de que quieres eliminar este registro?')"
-                            style="background-color: #dc3545; padding: 5px 10px; font-size: 0.8rem;">
-                      Eliminar
-                    </button>
-                  </form>
-                </div>
+          
+          <li style="background-color: rgba(0,0,0,0.2); padding: 15px; border-radius: 4px; margin-bottom: 8px; text-align: center;">    
+            <div>
+              <strong style="color: #fff; word-break: break-all;">{{ item.nombre }}</strong><br>
+              <span style="color: #bbb; font-size: 0.8em;">Creado: {{ item.fecha }}</span>
+            </div>
+
+            <div style="display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 12px;">
+              {% if item.status == 'success' %}
+                <a href="{{ url_for('descargar', filename=item.nombre) }}"
+                  style="background-color: #28a745; color: white; padding: 5px 10px; font-size: 0.8rem; border-radius: 4px; text-decoration: none;">
+                  Descargar
+                </a>
+              {% endif %}
+              <form action="{{ url_for('eliminar', filename=item.nombre) }}" method="POST" style="margin: 0;">
+                <button type="submit"
+                    onclick="return confirm('¿Estás seguro de que quieres eliminar este registro?')"
+                    style="background-color: #dc3545; padding: 5px 10px; font-size: 0.8rem; border: none; cursor: pointer;">
+                  Eliminar
+                </button>
+              </form>
+            </div>
+
+            {% if item.status == 'error' %}
+              <div style="color: #f8d7da; background-color: rgba(220, 53, 69, 0.2); border-left: 3px solid #dc3545; padding: 10px; font-weight: bold; font-size: 0.9em; margin-top: 10px; border-radius: 4px; text-align: left;">
+                Error: {{ item.error_msg }}
               </div>
+            {% elif item.status == 'processing' %}
+              <div style="color: #ffeeba; background-color: rgba(255, 193, 7, 0.2); border-left: 3px solid #ffc107; padding: 10px; font-weight: bold; font-size: 0.9em; margin-top: 10px; border-radius: 4px; text-align: left;">
+                Estado: Procesando... por favor, recarga la página en unos momentos.
+              </div>
+            {% endif %}
 
-              {% if item.status == 'error' %}
-                <div style="color: #f8d7da; background-color: rgba(220, 53, 69, 0.2); border-left: 3px solid #dc3545; padding: 10px; font-weight: bold; font-size: 0.9em; margin-top: 10px; border-radius: 4px;">
-                  Error: {{ item.error_msg }}
-                </div>
-              {% elif item.status == 'processing' %}
-                <div style="color: #ffeeba; background-color: rgba(255, 193, 7, 0.2); border-left: 3px solid #ffc107; padding: 10px; font-weight: bold; font-size: 0.9em; margin-top: 10px; border-radius: 4px;">
-                  Estado: Procesando... por favor, recarga la página en unos momentos.
-                </div>
-              {% endif %}
-
-              {% if item.summary %}
-                <div style="background-color: rgba(38,25,59,0.5); border-radius: 4px; padding: 10px; margin-top: 10px; border: 1px solid #FF3200;">
-                  <pre>{{ item.summary }}</pre>
-                </div>
-              {% endif %}
-            </li>
+            {% if item.summary %}
+              <div style="background-color: rgba(38,25,59,0.5); border-radius: 4px; padding: 10px; margin-top: 10px; border: 1px solid #FF3200; text-align: left;">
+                <pre>{{ item.summary }}</pre>
+              </div>
+            {% endif %}
+          </li>
+          
           {% endfor %}
         </ul>
       </div>
@@ -325,6 +326,7 @@
   </script>
 </body>
 </html>
+
 
 
 
