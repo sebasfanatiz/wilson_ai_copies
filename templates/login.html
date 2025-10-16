@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Iniciar Sesión - Wilson AI</title>
+  <style>
+    /* Copia y pega aquí EXACTAMENTE el mismo bloque <style> de tu index.html */
+    @font-face {
+      font-family: 'Gilroy';
+      src: local('Gilroy Bold'), local('Gilroy-Bold');
+      font-weight: 700;
+    }
+    body {
+      font-family: 'Gilroy', sans-serif; color: #FFFFFF; background: #000;
+      margin: 0; padding: 0; min-height: 100vh;
+    }
+    .dynamic-bg {
+      background-repeat: no-repeat; background-position: center center;
+      background-attachment: fixed; background-size: cover;
+    }
+    .container {
+      background-color: rgba(38, 25, 59, 0.8);
+      max-width: 500px; margin: 40px auto; padding: 20px; border-radius: 8px;
+    }
+    .header { text-align: center; margin-bottom: 20px; }
+    .header img { max-width: 200px; display: block; margin: 0 auto 10px; }
+    h1 { font-size: 2rem; color: #FF3200; margin: 0; }
+    label { color: #FFFFFF; font-weight: 700; display: block; margin-top: 1em; }
+    input[type="text"], input[type="password"] {
+      width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box;
+      font-size: 1rem; border: 2px solid #FF3200; border-radius: 4px;
+      background-color: rgba(255,255,255,0.1); color: #FFF;
+    }
+    button {
+      margin-top: 1.5em; padding: 10px 20px; font-size: 1rem;
+      font-weight: 700; background-color: #FF3200; color: #fff;
+      border: none; border-radius: 4px; cursor: pointer;
+      transition: background-color .2s ease; width: 100%;
+    }
+    button:hover { background-color: #e62e00; }
+    .flash-message {
+        padding: 15px; margin-bottom: 20px; border-radius: 4px;
+        color: #333;
+    }
+    .flash-success { background-color: #d4edda; }
+    .flash-error { background-color: #f8d7da; }
+  </style>
+</head>
+<body id="page-body" class="dynamic-bg" style="background-image: url('{{ url_for('static', filename='arte/fondo.webp') }}');">
+  
+  <div class="container">
+    <div class="header">
+      <img src="{{ url_for('static', filename='arte/logo.png') }}" alt="Logo">
+      <h1>Iniciar Sesión</h1>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="flash-message flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <form action="{{ url_for('login') }}" method="post">
+      <label for="username">Usuario</label>
+      <input type="text" id="username" name="username" required>
+
+      <label for="password">Contraseña</label>
+      <input type="password" id="password" name="password" required>
+
+      <button type="submit">Ingresar</button>
+    </form>
+  </div>
+
+</body>
+</html>
