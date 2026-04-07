@@ -132,23 +132,30 @@ def _polish_ending_es(t: str) -> str:
     return s
 
 def _smart_trim(text: str, limit: int, lang: str = "es") -> str:
-    """Recorte quirúrgico: prioriza sentido sobre longitud."""
-    if not text or len(text) <= limit:
-        return _polish_ending_es(text) if lang == "es" else text
-
-    # Intentar cortar en el último punto que entre en el límite
-    cut_match = list(re.finditer(r'[.!?]\s', text[:limit]))
-    if cut_match:
-        last_good_point = cut_match[-1].end()
-        return text[:last_good_point].strip()
-
-    # Si no hay puntos, cortar por espacio pero evitar conectores
-    last_space = text.rfind(" ", 0, limit - 3)
-    if last_space != -1:
-        res = text[:last_space].strip()
-        return _polish_ending_es(res) + "..."
-    
-    return text[:limit-3].strip() + "..."
+    """Recorta con preferencia por cierre de frase; nunca corta palabra ni deja conectores sueltos."""
+    if not isinstance(text, str):
+        return ""
+    t = text.strip()
+    if len(t) <= limit:
+        return _polish_ending_es(t) if lang == "es" else t
+    # 1) intentar cortar en puntuación “fina”
+    cut_points = [m.end() for m in re.finditer(r"[\.!?…]\s", t)]
+    cut_points = [c for c in cut_points if c <= limit]
+    if cut_points:
+        return _polish_ending_es(t[:max(cut_points)].strip()) if lang == "es" else t[:max(cut_points)].strip()
+    # 2) cortar por último espacio “saludable”
+    last_space = t.rfind(" ", 0, limit + 1)
+    if last_space != -1 and last_space >= int(limit * 0.6):
+        return _polish_ending_es(t[:last_space].strip()) if lang == "es" else t[:last_space].strip()
+    # 3) ensamblar palabras completas hasta el límite
+    out = []
+    for w in t.split():
+        if len((" ".join(out + [w])).strip()) <= limit:
+            out.append(w)
+        else:
+            break
+    s = " ".join(out).strip()
+    return _polish_ending_es(s) if lang == "es" else s
 
 def _format_discount(val) -> str:
     s = str(val).strip()
@@ -190,23 +197,23 @@ def _sanitize_google_no_exclaim(struct_market: dict) -> dict:
     return struct_market
 
 def _multiline_by_sentence(s: str) -> str:
-    """Divide por oraciones, limpia y asegura emojis por línea."""
-    if not isinstance(s, str) or not s.strip():
+    """Divide el texto en oraciones y las pone cada una en una línea nueva."""
+    if not isinstance(s, str):
         return ""
-    
-    # Separar por puntos, signos de exclamación o interrogación
-    parts = re.split(r'(?<=[.!?])\s+', s.strip())
-    
+    t = s.strip()
+    if not t:
+        return ""
+    # separa por final de oración, conservando el signo
+    parts = re.split(r'(?<=[\.!?…])\s+', t)
+    parts = [p.strip() for p in parts if p.strip()]
+    # evita líneas ultra cortas residuales tipo 'y', 'en', etc.
     lines = []
     for p in parts:
-        p = p.strip()
-        if len(p) < 5: continue # Evita ruidos
-        # Aseguramos que si la línea no tiene emoji, no la forzamos aquí, 
-        # pero el prompt se encargará de que los tenga.
+        # si quedó colgando una palabra muy corta por recorte, se ignora
+        if len(p) <= 2 and p.lower() in STOPWORDS_END_ES:
+            continue
         lines.append(p)
-    
-    # Unimos con doble salto de línea para máxima legibilidad en Meta
-    return "\n\n".join(lines)
+    return "\n".join(lines)
 
 def _format_meta_primary_texts_multiline(struct_market: dict) -> dict:
     """En Meta, cada oración en una línea para primary_texts de ambas campañas, respetando límite."""
