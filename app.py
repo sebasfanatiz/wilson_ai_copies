@@ -11,7 +11,6 @@ except ImportError:
     class BadRequestError(Exception): pass
 
 from agente import generar_copies
-import pandas as pd
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "un-secreto-muy-seguro")
@@ -23,11 +22,9 @@ os.makedirs(SALIDAS_DIR, exist_ok=True)
 ## ==============================================================================
 
 def _cargar_usuarios():
-    """Carga los usuarios desde el archivo Excel y los devuelve como un diccionario."""
     try:
         path_usuarios = os.path.join(BASE_DIR, "usuarios.xlsx")
         df = pd.read_excel(path_usuarios)
-        # Convierte el DataFrame a un diccionario para búsqueda rápida: {'usuario': 'contraseña'}
         return pd.Series(df.contraseña.values, index=df.usuario).to_dict()
     except FileNotFoundError:
         print("ADVERTENCIA: No se encontró el archivo 'usuarios.xlsx'. Nadie podrá iniciar sesión.")
@@ -37,7 +34,6 @@ def _cargar_usuarios():
         return {}
 
 def login_required(f):
-    """Decorador para proteger rutas que requieren inicio de sesión."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'user' not in session:
@@ -48,7 +44,6 @@ def login_required(f):
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    """Maneja el inicio de sesión."""
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
@@ -56,28 +51,25 @@ def login():
         usuarios = _cargar_usuarios()
         
         if username in usuarios and usuarios[username] == password:
-            session['user'] = username  # Guarda el usuario en la sesión
+            session['user'] = username 
             flash("¡Inicio de sesión exitoso!", "success")
             return redirect(url_for('index'))
         else:
             flash("Usuario o contraseña incorrectos.", "error")
             return redirect(url_for('login'))
             
-    # Si es GET, o si el login falla, muestra la página de login
     return render_template('login.html')
 
 @app.route('/logout')
 def logout():
-    """Maneja el cierre de sesión."""
-    session.pop('user', None)  # Elimina al usuario de la sesión
+    session.pop('user', None) 
     flash("Has cerrado sesión.", "success")
     return redirect(url_for('login'))
 
-## LÓGICA DE LA APP EXISTENTE (AHORA PROTEGIDA)
+## LÓGICA DE LA APP EXISTENTE
 ## ==============================================================================
 
 def _load_leagues():
-    # carga únicas de content_name + “Otro”
     try:
         path_content = os.path.join(BASE_DIR, "content_by_country.xlsx")
         df = pd.read_excel(path_content)
@@ -114,14 +106,12 @@ def _any_plan_matches_platform(plans_str, platform_base_names):
     return any(_norm_base_name(p) in platform_base_names for p in listed)
 
 def _load_leagues_by_platform(platform: str):
-    """Devuelve ['Otro', ligas...] filtradas por plataforma en content_by_country.xlsx."""
     try:
         path_content = os.path.join(BASE_DIR, "content_by_country.xlsx")
         path_plans   = os.path.join(BASE_DIR, "plans_and_pricing.xlsx")
         dfc = _normalize_headers(pd.read_excel(path_content))
         dfp = _normalize_headers(pd.read_excel(path_plans))
 
-        # columnas mínimas
         if 'plans_available' not in dfc.columns or 'content_name' not in dfc.columns:
             return ["Otro"]
 
@@ -129,7 +119,6 @@ def _load_leagues_by_platform(platform: str):
 
         dfc_filt = dfc[dfc['plans_available'].apply(_any_plan_matches_platform, platform_base_names=platform_base_names)]
         ligas = sorted({str(x).strip() for x in dfc_filt['content_name'].dropna().astype(str) if str(x).strip()})
-        # “Otro” siempre primero
         return ["Otro"] + ligas
     except Exception as e:
         print(f"Error cargando ligas para plataforma '{platform}': {e}")
@@ -140,7 +129,6 @@ def _split_markets_cell(cell: str):
     return [t.strip() for t in cell.split(',') if t.strip()]
 
 def _get_default_markets_for_platform(platform: str):
-    """Lee plans_and_pricing.xlsx y devuelve lista única de markets para esa plataforma."""
     try:
         path_plans = os.path.join(BASE_DIR, "plans_and_pricing.xlsx")
         df = _normalize_headers(pd.read_excel(path_plans))
@@ -154,9 +142,8 @@ def _get_default_markets_for_platform(platform: str):
         print(f"Error obteniendo markets para plataforma '{platform}': {e}")
         return ['US/CA','EUROPE','ROW']
 
-
 @app.route('/', methods=['GET'])
-@login_required ## Proteger ruta
+@login_required
 def index():
     archivos_info = []
     if os.path.exists(SALIDAS_DIR):
@@ -192,30 +179,28 @@ def index():
     archivos_info.sort(key=lambda x: x['timestamp'], reverse=True)
 
     plataformas = ["Fanatiz", "L1MAX", "AFA Play"]
-    plataforma_default = plataformas[0]  # Fanatiz
+    plataforma_default = plataformas[0]
     ligas = _load_leagues_by_platform(plataforma_default)
 
     return render_template('index.html', archivos=archivos_info, plataformas=plataformas, ligas=ligas)
 
 @app.route('/api/ligas', methods=['GET'])
-@login_required ## Proteger ruta
+@login_required
 def api_ligas():
     platform = request.args.get('platform', 'Fanatiz')
     ligas = _load_leagues_by_platform(platform)
     return jsonify(ligas)
 
 @app.route('/api/markets', methods=['GET'])
-@login_required ## Proteger ruta
+@login_required
 def api_markets():
     platform = request.args.get('platform', 'Fanatiz')
     league   = request.args.get('league', 'Otro')
 
     try:
-        # Si la liga es "Otro" => fallback: todos los mercados de la plataforma
         if league.strip().lower() == 'otro':
             return jsonify(_get_default_markets_for_platform(platform))
 
-        # Si hay liga: filtrar content_by_country por plataforma y liga, y colectar sus markets
         path_content = os.path.join(BASE_DIR, "content_by_country.xlsx")
         path_plans   = os.path.join(BASE_DIR, "plans_and_pricing.xlsx")
         dfc = _normalize_headers(pd.read_excel(path_content))
@@ -224,7 +209,6 @@ def api_markets():
         if 'plans_available' not in dfc.columns or 'content_name' not in dfc.columns or 'markets_available' not in dfc.columns:
             return jsonify([])
 
-        # filtrar por plataforma (reutilizamos la lógica de planes base)
         def _norm_base_name(plan_name: str):
             if not isinstance(plan_name, str): return ""
             return plan_name.lower().replace("monthly","").replace("annual","").strip()
@@ -248,7 +232,6 @@ def api_markets():
             markets.update(_split_markets_cell(mcell))
 
         if not markets:
-            # si no hay markets específicos, caemos al fallback de plataforma
             markets = set(_get_default_markets_for_platform(platform))
 
         return jsonify(sorted(markets))
@@ -257,18 +240,22 @@ def api_markets():
         return jsonify([])
 
 @app.route('/procesar', methods=['POST'])
-@login_required ## Proteger ruta
+@login_required
 def procesar():
     titulo     = request.form['titulo_campaña']
     brief      = request.form['brief_campaña']
     plataforma = request.form.get('plataforma', 'Fanatiz')
-    langs_list = request.form.getlist('langs')  # obtiene lista del <select multiple>
+    langs_list = request.form.getlist('langs')
     if not langs_list:
         langs_list = ['ES']
-    # normalizamos a ES,EN,PT
+    
     langs_csv = ",".join([l.strip().upper() for l in langs_list if l.strip()])
-    liga       = request.form.get('liga', 'Otro')
-    markets    = request.form.getlist('markets')  # <<--- acá
+    liga      = request.form.get('liga', 'Otro')
+    markets   = request.form.getlist('markets') 
+    
+    # NUEVO PARAMETRO DE PRECIOS
+    precio_val = request.form.get('precio', 'Si')
+    include_prices = (precio_val == 'Si')
 
     safe_title = re.sub(r'[^0-9A-Za-z]+', '_', titulo).strip('_')
     safe_platform = re.sub(r'[^0-9A-Za-z]+', '_', plataforma).strip('_')
@@ -278,7 +265,7 @@ def procesar():
     path_error      = path_out + '.error'
     path_summary    = path_out + '.summary'
 
-    def worker_generar_excel(app_context, titulo_w, brief_w, plataforma_w, langs_w, liga_w, markets_w, path_out_w, processing_w, error_w, summary_w):
+    def worker_generar_excel(app_context, titulo_w, brief_w, plataforma_w, langs_w, liga_w, markets_w, include_prices_w, path_out_w, processing_w, error_w, summary_w):
         with app_context:
             with open(processing_w, 'w') as f: f.write(str(datetime.now()))
             try:
@@ -288,7 +275,8 @@ def procesar():
                     langs_csv=langs_w,
                     league_selection=liga_w,
                     output_filename=path_out_w,
-                    markets_selected=markets_w    # <<--- pasamos al agente
+                    markets_selected=markets_w,
+                    include_prices=include_prices_w  # PASAMOS LA BANDERA
                 )
                 if cost_summary:
                     with open(summary_w, 'w', encoding='utf-8') as f:
@@ -305,16 +293,15 @@ def procesar():
 
     thread = threading.Thread(
         target=worker_generar_excel,
-        args=(app.app_context(), titulo, brief, plataforma, langs_csv, liga, markets, path_out, path_processing, path_error, path_summary)
+        args=(app.app_context(), titulo, brief, plataforma, langs_csv, liga, markets, include_prices, path_out, path_processing, path_error, path_summary)
     )
     thread.start()
 
     flash(f"¡Proceso para '{filename}' iniciado! Recargá en unos minutos.", "success")
     return redirect(url_for('index'))
 
-
 @app.route('/eliminar/<path:filename>', methods=['POST'])
-@login_required ## Proteger ruta
+@login_required
 def eliminar(filename):
     safe_filename = os.path.basename(filename)
     path_xlsx = os.path.join(SALIDAS_DIR, safe_filename)
@@ -333,18 +320,9 @@ def eliminar(filename):
     return redirect(url_for('index'))
 
 @app.route('/salidas/<path:filename>')
-@login_required ## Proteger ruta
+@login_required
 def descargar(filename):
     return send_from_directory(SALIDAS_DIR, filename, as_attachment=True)
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
-
-
-
-
-
-
-
-
-
