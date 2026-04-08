@@ -271,7 +271,6 @@ def limpiar_json(texto: str) -> dict:
         if start == -1 or end == 0: return {}
         try: return json.loads(texto[start:end])
         except: return {}
-
 # ==============================================================================
 # 7) TEXT BATCH PROCESSORS
 # ==============================================================================
@@ -281,9 +280,9 @@ def _expand_batch(texts: list, min_chars: int, max_chars: int, lang: str = 'es')
 
     bloques = "\n".join(f"Texto {i+1}: \"{texts[i]}\"" for i in idxs)
     prompts_by_lang = {
-        'en': ("You are an expert copywriter who lengthens texts in English...", f"Rewrite AT LEAST {min_chars} and AT MOST {max_chars} chars. Return 1 per line NO prefixes."),
-        'pt': ("Você é um redator especialista que alonga textos em português...", f"Reescreva para ter PELO MENOS {min_chars} e NO MÁXIMO {max_chars} chars. 1 por linha SEM prefixos."),
-        'es': ("Eres un redactor experto que expande textos en español...", f"Reescribe para que CADA salida tenga MÍNIMO {min_chars} y MÁXIMO {max_chars} chars. 1 por línea SIN prefijos."),
+        'en': ("You are an expert copywriter who lengthens texts in English.", f"Rewrite IN ENGLISH so EACH output has AT LEAST {min_chars} and AT MOST {max_chars} chars. Return 1 per line NO prefixes."),
+        'pt': ("Você é um redator especialista que alonga textos em português do Brasil.", f"Reescreva EM PORTUGUÊS para ter PELO MENOS {min_chars} e NO MÁXIMO {max_chars} chars. 1 por linha SEM prefixos."),
+        'es': ("Eres un redactor experto que expande textos en español.", f"Reescribe EN ESPAÑOL para que CADA salida tenga MÍNIMO {min_chars} y MÁXIMO {max_chars} chars. 1 por línea SIN prefijos."),
     }
     sys_msg, prompt_inst = prompts_by_lang.get(lang, prompts_by_lang['es'])
 
@@ -304,9 +303,9 @@ def preparar_batch(texts: list, limit: int, tipo: str, lang: str = 'es') -> tupl
     if idxs_long:
         bloques = "\n".join(f'Texto {i+1}: "{df.at[i, "Original"]}"' for i in idxs_long)
         pbl = {
-            'en': ("You are an expert copywriter who shortens texts.", f"Rewrite under {limit} chars. Return 1 per line, NO prefixes."),
-            'pt': ("Você é um redator especialista que encurta textos.", f"Reescreva com menos de {limit} caracteres. 1 por linha, SEM prefixos."),
-            'es': ("Eres un redactor experto que acorta textos.", f"Reescribe con MENOS de {limit} caracteres. 1 por línea, SIN prefijos."),
+            'en': ("You are an expert copywriter who shortens texts in English.", f"Rewrite IN ENGLISH under {limit} chars. Return 1 per line, NO prefixes."),
+            'pt': ("Você é um redator especialista que encurta textos em português do Brasil.", f"Reescreva EM PORTUGUÊS com menos de {limit} caracteres. 1 por linha, SEM prefixos."),
+            'es': ("Eres un redactor experto que acorta textos en español.", f"Reescribe EN ESPAÑOL con MENOS de {limit} caracteres. 1 por línea, SIN prefijos."),
         }
         sys_msg, p_inst = pbl.get(lang, pbl['es'])
         resp = chat_create(model=MODEL_CHAT, messages=[{"role": "system", "content": sys_msg}, {"role": "user", "content": f"{p_inst}\n\n{bloques}"}])
@@ -333,20 +332,41 @@ def traducir_batch(texts: list, target_lang: str) -> tuple:
 
     lang_name = "English (US)" if target_lang == "en" else "Português (Brasil)"
     prompt = (
-        f"Eres un traductor profesional. Traduce la lista JSON al idioma {lang_name}. "
-        f"Manten TODOS los emojis y los saltos de línea (\\n) en su posición. "
-        f"No adaptes a tono formal, mantén estilo futbolero.\n{json.dumps(texts, ensure_ascii=False)}"
+        f"Eres un traductor profesional. Traduce la siguiente lista de textos al idioma {lang_name}.\n"
+        f"REGLAS:\n"
+        f"1. Manten TODOS los emojis y los saltos de línea (\\n) en su posición exacta.\n"
+        f"2. No adaptes a tono formal, mantén el estilo futbolero original.\n"
+        f"3. Devuelve ÚNICAMENTE un JSON con la clave exacta 'translations' que contenga la lista de strings traducidos.\n\n"
+        f"{json.dumps(texts, ensure_ascii=False)}"
     )
     try:
         resp = chat_create(
             model=MODEL_CHAT, response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": "You are an expert translator designed to output JSON."},
+                {"role": "system", "content": "You are an expert translator designed to output STRICT JSON. Return a JSON object with a single key 'translations' containing a list of strings."},
                 {"role": "user", "content": prompt},
             ],
         )
-        return json.loads(resp.choices[0].message.content).get("translations", texts), getattr(resp, 'usage', None)
-    except: return texts, {}
+        raw = resp.choices[0].message.content
+        data = json.loads(raw)
+        
+        # Rescate de datos: si el modelo inventó una clave distinta, buscamos cualquier lista
+        translations = data.get("translations")
+        if not isinstance(translations, list):
+            for k, v in data.items():
+                if isinstance(v, list):
+                    translations = v
+                    break
+        
+        # Validamos que devuelva la misma cantidad de textos
+        if isinstance(translations, list) and len(translations) == len(texts):
+            return translations, getattr(resp, 'usage', None)
+        else:
+            print(f"ADVERTENCIA: La traducción a {target_lang} no devolvió la cantidad esperada de elementos. Usando fallback.")
+            return texts, getattr(resp, 'usage', None)
+    except Exception as e:
+        print(f"ERROR en traducción a {target_lang}: {e}")
+        return texts, {}
 
 # ==============================================================================
 # 8) PROMPT BUILDER (STRICT JSON & RULES)
