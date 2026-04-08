@@ -19,7 +19,7 @@ from openpyxl.styles import Font, PatternFill
 # ==============================================================================
 # 2) CONFIG & CONSTANTS
 # ==============================================================================
-MODEL_CHAT = os.getenv("OPENAI_MODEL_CHAT", "gpt-4o-mini")
+MODEL_CHAT = os.getenv("OPENAI_MODEL_CHAT", "gpt-5-chat-latest")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Estructura por campaña (conteos/limites)
@@ -836,8 +836,8 @@ def generar_copies(
     excel_usage = generar_excel_multi(final_by_market, output_langs=_parse_langs(langs_csv), filename=output_filename)
     for k in total_usage: total_usage[k] += excel_usage.get(k, 0) or 0
 
-    PRICE_PER_MILLION_INPUT = float(os.getenv("PRICE_PM_INPUT", 0.250))
-    PRICE_PER_MILLION_OUTPUT = float(os.getenv("PRICE_PM_OUTPUT", 2.000))
+    PRICE_PER_MILLION_INPUT = float(os.getenv("PRICE_PM_INPUT", 0.125))
+    PRICE_PER_MILLION_OUTPUT = float(os.getenv("PRICE_PM_OUTPUT", 10.000))
     input_cost = (total_usage.get("prompt_tokens", 0) / 1_000_000) * PRICE_PER_MILLION_INPUT
     output_cost = (total_usage.get("completion_tokens", 0) / 1_000_000) * PRICE_PER_MILLION_OUTPUT
     total_cost = input_cost + output_cost
