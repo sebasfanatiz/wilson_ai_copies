@@ -411,6 +411,7 @@ def _google_rules_text(include_prices: bool = True):
 def _meta_rules_text(include_prices: bool = True):
     base = (
         "Reglas Meta (estrictas):\n"
+        "- CANTIDADES: Genera EXACTAMENTE 4 primary_texts, 3 headlines y 3 descriptions por cada campaña (es obligatorio llenar todos los espacios).\n"
         "- primary_texts: SIEMPRE incluir emojis relacionados al texto. Mínimo 200 caracteres, <=250.\n"
         "- formatea primary_texts: cada oración debe ir en una línea separada (usa salto de línea '\\n').\n"
         "- headlines & descriptions: pueden reutilizar titulares/beneficios de Google cuando sean aplicables.\n"
